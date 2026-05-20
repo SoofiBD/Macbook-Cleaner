@@ -1,26 +1,26 @@
 # 🍎 Clean Mac
 
-> macOS sistem temizleme aracı — basit, güvenli, etkili.
+> A macOS system cleanup tool — simple, safe, and effective.
 
 [![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen)](https://www.shellcheck.net/)
 [![macOS](https://img.shields.io/badge/macOS-Ventura%20%7C%20Sonoma%20%7C%20Sequoia-blue)](https://www.apple.com/macos/)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-macOS'ta cache, log, geçici dosya, uygulama kalıntıları ve çöp kutusu gibi gereksiz verileri güvenle temizler. **İnteraktif terminal arayüzü** ve **modern web dashboard** ile kullanılabilir.
+Clean Mac safely removes unnecessary data on macOS such as caches, logs, temporary files, leftover application data, and Trash contents. It can be used from an interactive terminal interface or a lightweight web dashboard.
 
 ---
 
-## ✨ Özellikler
+## ✨ Features
 
-- 🔍 Önce tarar, onayınızı bekler — sürpriz yok
-- 📊 7 kategori ile esnek temizlik
-- 🌐 Modern web dashboard (tek komutla başlat)
-- 🛡️ Kritik sistem dosyalarına dokunmaz
-- 🍎 Bash 3.2+ uyumlu (tüm macOS sürümleri)
+- 🔍 Scans first and asks for confirmation — no surprises
+- 📊 Flexible cleanup across 7 categories
+- 🌐 Lightweight web dashboard (start with a single command)
+- 🛡️ Avoids touching critical system files by default
+- 🍎 Compatible with Bash 3.2+ (works on all macOS releases)
 
 ---
 
-## 🚀 Kurulum
+## 🚀 Installation
 
 ```bash
 git clone https://github.com/<username>/apple-cleanup.git
@@ -30,15 +30,15 @@ chmod +x clean_mac.sh
 
 ---
 
-## 📖 Kullanım
+## 📖 Usage
 
-### Terminal Arayüzü
+### Terminal (interactive)
 
 ```bash
-# İnteraktif temizleme (önce tarar, sonra sorar)
+# Run interactive cleanup (scans first, then prompts)
 bash clean_mac.sh
 
-# Yardım
+# Show help
 bash clean_mac.sh --help
 ```
 
@@ -46,35 +46,35 @@ bash clean_mac.sh --help
 
 ```bash
 python3 web/server.py
-# Tarayıcıda http://localhost:8080 adresini açın
+# Open your browser at http://localhost:8080
 ```
 
 ---
 
-## 📦 Kategoriler
+## 📦 Categories
 
-| # | Kategori | Hedef | Not |
-|---|---------|-------|-----|
-| 1 | 📦 Kullanıcı Cache | `~/Library/Caches/*` | |
-| 2 | 🖥️ Sistem Cache | `/Library/Caches/*` | sudo gerekir |
-| 3 | 📂 Uygulama Kalıntıları | `~/Library/Application Support/` + `Preferences/` | İnteraktif seçim |
-| 4 | 📋 Loglar | `~/Library/Logs/*` + `/Library/Logs/*` | |
-| 5 | 🗃️ Geçici Dosyalar | `$TMPDIR` + user var/folders | |
-| 6 | 🛠️ Geliştirici | Xcode DerivedData + kırık symlink'ler | İnteraktif seçim |
-| 7 | 🗑️ Çöp Kutusu | `~/.Trash/*` | |
+| # | Category | Target | Notes |
+|---|----------|--------|-------|
+| 1 | 📦 User Caches | `~/Library/Caches/*` | |
+| 2 | 🖥️ System Caches | `/Library/Caches/*` | requires `sudo` |
+| 3 | 📂 App Leftovers | `~/Library/Application Support/`, `~/Library/Preferences/` | interactive selection |
+| 4 | 📋 Logs | `~/Library/Logs/*`, `/Library/Logs/*` | |
+| 5 | 🗃️ Temporary Files | `$TMPDIR`, user var/folders | |
+| 6 | 🛠️ Developer | Xcode DerivedData, broken symlinks | interactive selection |
+| 7 | 🗑️ Trash | `~/.Trash/*` | |
 
 ---
 
-## 🏗️ Proje Yapısı
+## 🏗️ Project Structure
 
 ```
 apple-cleanup/
-├── clean_mac.sh        # Ana temizleme scripti
+├── clean_mac.sh        # Main cleanup script
 ├── web/
-│   ├── server.py       # Python web sunucusu
-│   ├── index.html      # Dashboard arayüzü
-│   ├── style.css       # Stiller
-│   └── script.js       # Frontend mantığı
+│   ├── server.py       # Python web server for the dashboard
+│   ├── index.html      # Dashboard UI
+│   ├── style.css       # Styles
+│   └── script.js       # Frontend logic
 ├── README.md
 ├── LICENSE
 └── .gitignore
@@ -84,31 +84,31 @@ apple-cleanup/
 
 ## 🔧 Web API
 
-Web dashboard, `clean_mac.sh`'i JSON modunda çalıştırır:
+The web dashboard invokes `clean_mac.sh` in JSON mode for programmatic control:
 
 ```bash
-# Tarama sonuçları
+# Get scan results
 bash clean_mac.sh --scan-json
 
-# Belirli kategorileri temizle
+# Clean specific categories (comma-separated indices)
 bash clean_mac.sh --clean-json 1,4,7
 
-# Sistem durumu
+# Get system status
 bash clean_mac.sh --status-json
 ```
 
 ---
 
-## ⚠️ Güvenlik Notları
+## ⚠️ Safety Notes
 
-- Script sadece cache, log ve geçici dosyaları siler
-- macOS bu dosyaları gerektiğinde otomatik yeniden oluşturur
-- `Downloads` klasörüne dokunulmaz
-- Sistem Cache için `sudo` yetkisi gerekir (terminal modunda)
-- Web dashboard üzerinden sudo gerektiren kategoriler atlanır
+- The script only removes caches, logs, and temporary files by default.
+- macOS will recreate many of these files as needed.
+- The `Downloads` folder is not touched.
+- System Cache cleanup requires `sudo` (terminal mode).
+- The web dashboard skips categories that require `sudo` unless explicitly enabled.
 
 ---
 
-## 📄 Lisans
+## 📄 License
 
-MIT License — detaylar için [LICENSE](LICENSE) dosyasına bakın.
+MIT License — see [LICENSE](LICENSE) for details.
