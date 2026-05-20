@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="tr" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Apple Cleanup — macOS sisteminizi hızlı ve güvenli bir şekilde temizleyin. Önbellek, geçici dosyalar, loglar ve daha fazlasını kaldırın.">
+  <meta name="keywords" content="macOS temizleme, cache temizleme, sistem optimizasyonu, Apple Cleanup, disk temizleme">
+  <meta name="author" content="Apple Cleanup">
+  <meta name="theme-color" content="#0a0a0f">
+  <meta property="og:title" content="Apple Cleanup — macOS Sistem Temizleyici">
+  <meta property="og:description" content="macOS sisteminizi hızlı ve güvenli bir şekilde temizleyin.">
+  <meta property="og:type" content="website">
+  <title>Apple Cleanup — macOS Sistem Temizleyici</title>
+  <link rel="stylesheet" href="style.css">
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍎</text></svg>">
+</head>
+<body>
+  <div class="container">
+
+    <!-- ═══ Header ═══ -->
+    <header class="header" role="banner">
+      <div class="header-brand">
+        <span class="header-logo" aria-hidden="true">🍎</span>
+        <h1 class="header-title">Apple Cleanup</h1>
+        <span class="header-version">v1.0</span>
+      </div>
+      <button
+        class="theme-toggle"
+        id="themeToggle"
+        type="button"
+        aria-label="Tema değiştir"
+        title="Tema değiştir"
+      >
+        <span class="theme-toggle-icons" aria-hidden="true">
+          <span>🌙</span>
+          <span>☀️</span>
+        </span>
+      </button>
+    </header>
+
+    <!-- ═══ System Info Bar ═══ -->
+    <div class="system-bar" role="status" aria-label="Sistem bilgileri">
+      <div class="system-item">
+        <span class="label">macOS</span>
+        <span class="value loading" id="sysVersion">Yükleniyor…</span>
+      </div>
+      <div class="system-separator" aria-hidden="true"></div>
+      <div class="system-item">
+        <span class="label">Kullanıcı</span>
+        <span class="value loading" id="sysUser">Yükleniyor…</span>
+      </div>
+      <div class="system-separator" aria-hidden="true"></div>
+      <div class="system-item">
+        <span class="label">Boş Alan</span>
+        <span class="value loading" id="sysDiskFree">Yükleniyor…</span>
+      </div>
+      <div class="disk-bar-wrap">
+        <div class="disk-bar" role="progressbar" aria-label="Disk kullanımı" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
+          <div class="disk-bar-fill" id="diskBarFill"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══ Quick Actions ═══ -->
+    <div class="quick-actions">
+      <div class="quick-actions-left">
+        <button class="btn-quick" id="btnSelectAll" type="button">✓ Tümünü Seç</button>
+        <button class="btn-quick" id="btnSelectNone" type="button">✕ Hiçbirini Seçme</button>
+      </div>
+      <div class="total-size" id="totalSize"></div>
+    </div>
+
+    <!-- ═══ Category Cards Grid ═══ -->
+    <main>
+      <div class="cards-grid" id="cardsGrid" role="list" aria-label="Temizleme kategorileri">
+
+        <!-- Card: user_cache -->
+        <div class="category-card card-enter selected" data-category="user_cache" data-index="1" role="listitem">
+          <div class="card-top">
+            <div style="display:flex;align-items:center;gap:14px">
+              <div class="card-icon-wrap" aria-hidden="true">📦</div>
+              <div class="card-info">
+                <div class="card-name">Kullanıcı Cache</div>
+                <div class="card-desc">Uygulama önbellek dosyaları</div>
+              </div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" checked aria-label="Kullanıcı Cache seç">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="card-meta">
+            <div class="card-size">
+              <span class="size-badge" data-size="user_cache">— Taranmadı</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card: system_cache -->
+        <div class="category-card card-enter selected" data-category="system_cache" data-index="2" role="listitem">
+          <div class="card-top">
+            <div style="display:flex;align-items:center;gap:14px">
+              <div class="card-icon-wrap" aria-hidden="true">🖥️</div>
+              <div class="card-info">
+                <div class="card-name">Sistem Cache <span class="sudo-badge" title="Yönetici izni gerektirir">🔒 sudo</span></div>
+                <div class="card-desc">Sistem seviyesi önbellek</div>
+              </div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" checked aria-label="Sistem Cache seç">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="card-meta">
+            <div class="card-size">
+              <span class="size-badge" data-size="system_cache">— Taranmadı</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card: app_leftovers -->
+        <div class="category-card card-enter selected" data-category="app_leftovers" data-index="3" role="listitem">
+          <div class="card-top">
+            <div style="display:flex;align-items:center;gap:14px">
+              <div class="card-icon-wrap" aria-hidden="true">📂</div>
+              <div class="card-info">
+                <div class="card-name">Uygulama Kalıntıları</div>
+                <div class="card-desc">Kaldırılmış uygulama artıkları</div>
+              </div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" checked aria-label="Uygulama Kalıntıları seç">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="card-meta">
+            <div class="card-size">
+              <span class="size-badge" data-size="app_leftovers">— Taranmadı</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card: logs -->
+        <div class="category-card card-enter selected" data-category="logs" data-index="4" role="listitem">
+          <div class="card-top">
+            <div style="display:flex;align-items:center;gap:14px">
+              <div class="card-icon-wrap" aria-hidden="true">📋</div>
+              <div class="card-info">
+                <div class="card-name">Loglar</div>
+                <div class="card-desc">Sistem ve uygulama kayıtları</div>
+              </div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" checked aria-label="Loglar seç">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="card-meta">
+            <div class="card-size">
+              <span class="size-badge" data-size="logs">— Taranmadı</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card: temp_files -->
+        <div class="category-card card-enter selected" data-category="temp_files" data-index="5" role="listitem">
+          <div class="card-top">
+            <div style="display:flex;align-items:center;gap:14px">
+              <div class="card-icon-wrap" aria-hidden="true">🗃️</div>
+              <div class="card-info">
+                <div class="card-name">Geçici Dosyalar</div>
+                <div class="card-desc">Geçici ve ara dosyalar</div>
+              </div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" checked aria-label="Geçici Dosyalar seç">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="card-meta">
+            <div class="card-size">
+              <span class="size-badge" data-size="temp_files">— Taranmadı</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card: developer -->
+        <div class="category-card card-enter selected" data-category="developer" data-index="6" role="listitem">
+          <div class="card-top">
+            <div style="display:flex;align-items:center;gap:14px">
+              <div class="card-icon-wrap" aria-hidden="true">🛠️</div>
+              <div class="card-info">
+                <div class="card-name">Geliştirici</div>
+                <div class="card-desc">Xcode DerivedData ve bozuk linkler</div>
+              </div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" checked aria-label="Geliştirici seç">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="card-meta">
+            <div class="card-size">
+              <span class="size-badge" data-size="developer">— Taranmadı</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Card: trash -->
+        <div class="category-card card-enter selected" data-category="trash" data-index="7" role="listitem">
+          <div class="card-top">
+            <div style="display:flex;align-items:center;gap:14px">
+              <div class="card-icon-wrap" aria-hidden="true">🗑️</div>
+              <div class="card-info">
+                <div class="card-name">Çöp Kutusu</div>
+                <div class="card-desc">Çöp kutusundaki dosyalar</div>
+              </div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" checked aria-label="Çöp Kutusu seç">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="card-meta">
+            <div class="card-size">
+              <span class="size-badge" data-size="trash">— Taranmadı</span>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </main>
+
+    <!-- ═══ Action Buttons ═══ -->
+    <div class="actions">
+      <button class="btn btn-scan" id="btnScan" type="button">
+        <span class="spinner" aria-hidden="true"></span>
+        <span class="btn-text">🔍 Tara</span>
+      </button>
+      <button class="btn btn-clean" id="btnClean" type="button" disabled>
+        <span class="spinner" aria-hidden="true"></span>
+        <span class="btn-text">🧹 Temizle</span>
+      </button>
+    </div>
+
+    <!-- ═══ Results Panel ═══ -->
+    <section class="results-panel" id="resultsPanel" aria-live="polite">
+      <div class="results-header">
+        <span class="results-icon" aria-hidden="true">✨</span>
+        <div>
+          <div class="results-title" id="resultsTitle">Temizlik Tamamlandı!</div>
+          <div class="results-subtitle" id="resultsSubtitle"></div>
+        </div>
+      </div>
+      <div class="results-freed" id="resultsFreed"></div>
+      <div class="results-details" id="resultsDetails"></div>
+    </section>
+
+    <!-- ═══ Terminal Panel ═══ -->
+    <section class="terminal" aria-label="İşlem kayıtları">
+      <div class="terminal-header">
+        <span class="terminal-dot red" aria-hidden="true"></span>
+        <span class="terminal-dot yellow" aria-hidden="true"></span>
+        <span class="terminal-dot green" aria-hidden="true"></span>
+        <span class="terminal-title">apple-cleanup — terminal</span>
+      </div>
+      <div class="terminal-body" id="terminalBody" role="log" aria-live="polite">
+        <!-- Log lines appear here -->
+      </div>
+    </section>
+
+    <!-- ═══ Footer ═══ -->
+    <footer class="footer">
+      Apple Cleanup v1.0 — macOS sistem temizleme aracı
+    </footer>
+
+  </div>
+
+  <script src="script.js"></script>
+</body>
+</html>
