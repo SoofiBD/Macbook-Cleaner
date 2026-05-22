@@ -7,6 +7,7 @@ Serves the web UI and proxies API requests to clean_mac.sh
 import http.server
 import json
 import os
+import re
 import subprocess
 import sys
 import urllib.parse
@@ -148,7 +149,10 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
 
         ios_backups_selected = payload.get("ios_backups_selected", [])
         if ios_backups_selected and isinstance(ios_backups_selected, list):
-            args += ["--ios-backups-sub", ",".join(str(x) for x in ios_backups_selected)]
+            _uuid_re = re.compile(r'^[0-9A-Fa-f\-]{1,40}$')
+            safe_uuids = [u for u in ios_backups_selected if isinstance(u, str) and _uuid_re.match(u)]
+            if safe_uuids:
+                args += ["--ios-backups-sub", ",".join(safe_uuids)]
 
         data, err = self._run_script(args)
         if err:

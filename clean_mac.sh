@@ -552,6 +552,13 @@ clean_ios_backups() {
     IFS="$IFS_OLD"
     local uuid
     for uuid in ${clean_uuids[@]+"${clean_uuids[@]}"}; do
+      [ -z "$uuid" ] && continue
+      case "$uuid" in
+        */*|*..*)
+          err "Geçersiz UUID (path traversal girişimi): $uuid"
+          continue
+          ;;
+      esac
       local full_path="$backup_dir/$uuid"
       if [ -d "$full_path" ]; then
         safe_rm "$full_path" "iOS Yedeği: $uuid"
