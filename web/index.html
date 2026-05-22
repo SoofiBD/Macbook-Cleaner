@@ -273,8 +273,60 @@
           </div>
         </div>
 
+        <!-- Card: ios_backups -->
+        <div class="category-card card-enter card-danger" data-category="ios_backups" data-index="10" role="listitem">
+          <div class="card-top">
+            <div style="display:flex;align-items:center;gap:14px">
+              <div class="card-icon-wrap" aria-hidden="true">📱</div>
+              <div class="card-info">
+                <div class="card-name">iOS Yedekleri</div>
+                <div class="card-desc">iPhone/iPad MobileSync yedekleri</div>
+                <div class="card-warn-label">Silmeden önce kontrol edin!</div>
+              </div>
+            </div>
+            <label class="toggle-switch">
+              <input type="checkbox" aria-label="iOS Yedekleri seç">
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+          <div class="card-meta">
+            <div class="card-size">
+              <span class="size-badge" data-size="ios_backups">— Taranmadı</span>
+            </div>
+          </div>
+        </div>
+
       </div>
     </main>
+
+    <!-- ═══ Maintenance Section ═══ -->
+    <section class="maintenance-section" aria-label="Sistem bakım araçları">
+      <div class="maintenance-header">
+        <span class="maintenance-icon" aria-hidden="true">🔧</span>
+        <div>
+          <div class="maintenance-title">Sistem Bakımı</div>
+          <div class="maintenance-subtitle">Temizlik dışı onarım araçları — seçim gerektirmez</div>
+        </div>
+      </div>
+      <div class="maintenance-cards">
+        <div class="maintenance-card" id="spotlightCard">
+          <div class="maintenance-card-left">
+            <span class="maintenance-card-icon" aria-hidden="true">🔦</span>
+            <div class="maintenance-card-info">
+              <div class="maintenance-card-name">Spotlight İndeksini Yenile</div>
+              <div class="maintenance-card-desc">
+                Disk alanının yanlış gösterilmesi (hayalet veri) sorununu çözer.
+                Arka planda çalışır, birkaç dakika sürebilir. macOS yeniden tarar.
+              </div>
+            </div>
+          </div>
+          <button class="btn-maintenance" id="btnSpotlight" type="button">
+            <span class="spinner" aria-hidden="true"></span>
+            <span class="btn-text">🔦 Yenile</span>
+          </button>
+        </div>
+      </div>
+    </section>
 
     <!-- ═══ Action Buttons ═══ -->
     <div class="actions">
