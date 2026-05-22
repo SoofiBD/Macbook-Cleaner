@@ -1200,6 +1200,13 @@ do_status_json() {
 ENDJSON
 }
 
+do_spotlight_reindex() {
+  (sudo mdutil -i off / 2>/dev/null
+   sudo mdutil -i on  / 2>/dev/null
+   sudo mdutil -E    / 2>/dev/null) &
+  echo '{"success": true, "status": "started", "message": "Spotlight yeniden indeksleme arka planda başlatıldı."}'
+}
+
 # ─── Ana Akış ────────────────────────────────────────────────────────────────
 main() {
   local args=("$@")
@@ -1214,6 +1221,10 @@ main() {
         ;;
       --status-json)
         do_status_json
+        exit 0
+        ;;
+      --spotlight-reindex)
+        do_spotlight_reindex
         exit 0
         ;;
       --clean-json)
