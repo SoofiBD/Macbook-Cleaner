@@ -29,6 +29,7 @@ CLEAN_RESULTS=()
 APP_LEFTOVERS_CLEAN=""
 BROWSER_FULL_CLEAN=""
 DEVELOPER_CLEAN=""
+IOS_BACKUPS_CLEAN=""
 
 # Tarayıcı cache dizinleri (~/Library/Caches içindeki üst-seviye klasör adları)
 BROWSER_CACHE_TOPDIRS=(
@@ -59,12 +60,12 @@ BROWSER_FULL_DIRS=(
 )
 
 # Paralel diziler — bash 3.2 (Monterey dahil tüm macOS) ile uyumlu
-CAT_IDS=(user_cache system_cache app_leftovers logs temp_files developer trash browser_cache browser_full)
+CAT_IDS=(user_cache system_cache app_leftovers logs temp_files developer trash browser_cache browser_full ios_backups)
 CAT_NAMES=("Kullanıcı Cache" "Sistem Cache" "Uygulama Kalıntıları" \
             "Loglar" "Geçici Dosyalar" "Geliştirici" "Çöp Kutusu" \
-            "Tarayıcı Cache" "Tarayıcı Tüm Veri")
-CAT_SIZES=(0 0 0 0 0 0 0 0 0)
-CAT_NEEDS_SUDO=(0 1 0 0 0 0 0 0 0)
+            "Tarayıcı Cache" "Tarayıcı Tüm Veri" "iOS Yedekleri")
+CAT_SIZES=(0 0 0 0 0 0 0 0 0 0)
+CAT_NEEDS_SUDO=(0 1 0 0 0 0 0 0 0 0)
 
 # ─── UI ─────────────────────────────────────────────────────────────────────
 header() {
@@ -363,11 +364,20 @@ scan_browser_full() {
   CAT_SIZES[8]=$total
 }
 
+scan_ios_backups() {
+  local backup_dir="$HOME/Library/MobileSync/Backup"
+  local s=0
+  if [ -d "$backup_dir" ]; then
+    s=$(get_dir_size_bytes "$backup_dir") || s=0
+  fi
+  CAT_SIZES[9]=$s
+}
+
 scan_all() {
   header "🔍 Taranıyor..."
   local fns=(scan_user_cache scan_system_cache scan_app_leftovers \
              scan_logs scan_temp_files scan_developer scan_trash \
-             scan_browser_cache scan_browser_full)
+             scan_browser_cache scan_browser_full scan_ios_backups)
   local i
   for i in "${!fns[@]}"; do
     echo -ne "  ${DIM}${CAT_NAMES[$i]}...${NC}\r"
@@ -513,6 +523,80 @@ clean_browser_full() {
       if confirm "Emin misiniz?"; then
         safe_rm_contents "${avail_paths[$real_idx]}" "${avail_names[$real_idx]} Profili"
       fi
+    fi
+  done
+}
+
+clean_ios_backups() {
+  header "📱 iOS Yedekleri Temizleniyor"
+  local backup_dir="$HOME/Library/MobileSync/Backup"
+
+  if $JSON_MODE; then
+    if [ -z "$IOS_BACKUPS_CLEAN" ]; then
+      info "Temizlenecek yedek belirtilmedi, atlanıyor."
+      return
+    fi
+    local IFS_OLD="$IFS"
+    IFS=','
+    local clean_uuids=($IOS_BACKUPS_CLEAN)
+    IFS="$IFS_OLD"
+    local uuid
+    for uuid in ${clean_uuids[@]+"${clean_uuids[@]}"}; do
+      local full_path="$backup_dir/$uuid"
+      if [ -d "$full_path" ]; then
+        safe_rm "$full_path" "iOS Yedeği: $uuid"
+      fi
+    done
+    return
+  fi
+
+  # Interactive CLI Mode
+  if [ ! -d "$backup_dir" ]; then
+    info "iOS yedekleri bulunamadı."
+    return
+  fi
+
+  echo ""
+  local item base sz_b sz_h mod_date idx=1
+  local backup_paths=()
+  local backup_names=()
+  while IFS= read -r -d '' item; do
+    [ -d "$item" ] || continue
+    base=$(basename "$item")
+    sz_b=$(get_size_bytes "$item") || sz_b=0
+    sz_h=$(format_bytes "$sz_b")
+    mod_date=$(stat -f "%Sm" -t "%Y-%m-%d" "$item" 2>/dev/null || echo "Bilinmiyor")
+    printf "  ${GREEN}%-3d${NC}  %-40s  %-8s  %s\n" "$idx" "$base" "$sz_h" "$mod_date"
+    backup_paths+=("$item")
+    backup_names+=("$base")
+    idx=$((idx + 1))
+  done < <(find "$backup_dir" -maxdepth 1 -mindepth 1 -type d -print0 2>/dev/null | sort -z)
+
+  if [ "${#backup_paths[@]}" -eq 0 ]; then
+    info "Temizlenecek iOS yedeği bulunamadı."
+    return
+  fi
+
+  echo ""
+  echo -ne "  Numara girin (boşlukla), ${BOLD}all${NC} veya ${BOLD}none${NC}: "
+  local selection; read -r selection
+
+  if [ "$selection" = "none" ] || [ -z "$selection" ]; then
+    info "iOS yedekleri atlandı."
+    return
+  fi
+
+  local indices=()
+  if [ "$selection" = "all" ]; then
+    local j; for j in "${!backup_paths[@]}"; do indices+=("$((j+1))"); done
+  else
+    read -ra indices <<< "$selection"
+  fi
+
+  for num in ${indices[@]+"${indices[@]}"}; do
+    local real_idx=$((num - 1))
+    if [ "$real_idx" -ge 0 ] && [ "$real_idx" -lt "${#backup_paths[@]}" ]; then
+      safe_rm "${backup_paths[$real_idx]}" "iOS Yedeği: ${backup_names[$real_idx]}"
     fi
   done
 }
@@ -815,7 +899,7 @@ run_clean() {
   local selected_indices=("$@")
   local fn_map=(clean_user_cache clean_system_cache clean_app_leftovers \
                 clean_logs clean_temp_files clean_developer clean_trash \
-                clean_browser_cache clean_browser_full)
+                clean_browser_cache clean_browser_full clean_ios_backups)
   local idx
   for idx in ${selected_indices[@]+"${selected_indices[@]}"}; do
     local real_idx=$((idx - 1))
@@ -948,6 +1032,31 @@ scan_browser_full_subitems_json() {
   done
 }
 
+scan_ios_backups_subitems_json() {
+  local backup_dir="$HOME/Library/MobileSync/Backup"
+  [ -d "$backup_dir" ] || return 0
+  local first=true
+  local item base s sz_h mod_date esc_base esc_path esc_name display_name
+  while IFS= read -r -d '' item; do
+    [ -d "$item" ] || continue
+    base=$(basename "$item")
+    s=$(get_size_bytes "$item") || s=0
+    [ "$s" -le 0 ] && continue
+    sz_h=$(format_bytes "$s")
+    mod_date=$(stat -f "%Sm" -t "%Y-%m-%d" "$item" 2>/dev/null || echo "Bilinmiyor")
+    display_name="$base ($mod_date)"
+    esc_base=$(json_escape_str "$base")
+    esc_path=$(json_escape_str "$item")
+    esc_name=$(json_escape_str "$display_name")
+    if [ "$first" = true ]; then
+      first=false
+    else
+      echo ","
+    fi
+    echo -n "        {\"id\": \"$esc_base\", \"name\": \"$esc_name\", \"path\": \"$esc_path\", \"size_bytes\": $s, \"size_human\": \"$sz_h\", \"is_orphaned\": true}"
+  done < <(find "$backup_dir" -maxdepth 1 -mindepth 1 -type d -print0 2>/dev/null | sort -z)
+}
+
 do_scan_json() {
   SUDO_AVAILABLE=false
   scan_all >/dev/null 2>&1
@@ -991,6 +1100,11 @@ ENDJSON
       scan_browser_full_subitems_json
       echo ""
       echo "      ]"
+    elif [ "$id" = "ios_backups" ]; then
+      echo "      ,\"subitems\": ["
+      scan_ios_backups_subitems_json
+      echo ""
+      echo "      ]"
     fi
     
     local comma=","
@@ -1030,7 +1144,7 @@ do_clean_json() {
   # Temizleme fonksiyon eşleşmesi
   local fn_map=(clean_user_cache clean_system_cache clean_app_leftovers \
                 clean_logs clean_temp_files clean_developer clean_trash \
-                clean_browser_cache clean_browser_full)
+                clean_browser_cache clean_browser_full clean_ios_backups)
 
   local idx
   for idx in ${cat_nums[@]+"${cat_nums[@]}"}; do
@@ -1117,6 +1231,10 @@ main() {
       --developer-sub)
         i=$((i + 1))
         DEVELOPER_CLEAN="${args[$i]}"
+        ;;
+      --ios-backups-sub)
+        i=$((i + 1))
+        IOS_BACKUPS_CLEAN="${args[$i]}"
         ;;
       --help|-h)
         echo ""
