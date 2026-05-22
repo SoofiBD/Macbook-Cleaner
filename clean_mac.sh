@@ -1201,9 +1201,10 @@ ENDJSON
 }
 
 do_spotlight_reindex() {
-  (sudo mdutil -i off / 2>/dev/null
-   sudo mdutil -i on  / 2>/dev/null
-   sudo mdutil -E    / 2>/dev/null) &
+  (sudo mdutil -i off / 2>/dev/null || true
+   sudo mdutil -E    / 2>/dev/null || true
+   sudo mdutil -i on / 2>/dev/null || true) &
+  disown
   echo '{"success": true, "status": "started", "message": "Spotlight yeniden indeksleme arka planda başlatıldı."}'
 }
 
