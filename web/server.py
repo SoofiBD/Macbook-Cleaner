@@ -200,6 +200,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
 
 
 def main():
+    http.server.HTTPServer.allow_reuse_address = True
     server = http.server.HTTPServer(("0.0.0.0", PORT), CleanupHandler)
     print(f"🍎 Apple Cleanup Dashboard")
     print(f"   http://localhost:{PORT}")
