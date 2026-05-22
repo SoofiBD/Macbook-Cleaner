@@ -243,7 +243,13 @@ is_app_installed() {
   local dir_name="$1"
   # Kritik sistem ve korunan klasörler her zaman kurulu kabul edilir ve korunur
   case "$dir_name" in
-    Apple|com.apple.*|Google|com.google.*|Microsoft|com.microsoft.*|Adobe|com.adobe.*|Helper|CrashReporter|MobileSync|SyncServices|Oracle|com.oracle.*|Homebrew)
+    Apple|com.apple.*|com.google.*|com.microsoft.*|com.adobe.*|\
+    com.oracle.*|Homebrew|\
+    Helper|CrashReporter|MobileSync|SyncServices|\
+    Audio|Fonts|Compositions|ColorSync|Spelling|Dictionaries|\
+    AddressBook|Calendars|Mail|Messages|Safari|\
+    CallHistoryDB|CallHistoryTransactions|CloudDocs|Dock|\
+    iCloud|Knowledge|Network|VirtualMachines|DiskImages)
       return 0
       ;;
   esac
@@ -285,7 +291,11 @@ scan_app_leftovers() {
   while IFS= read -r -d '' item; do
     base=$(basename "$item")
     case "$base" in
-      com.apple.*|Apple|MobileSync|SyncServices|CrashReporter) continue ;;
+      com.apple.*|Apple|MobileSync|SyncServices|CrashReporter|\
+      Audio|Fonts|Compositions|ColorSync|Spelling|Dictionaries|\
+      AddressBook|Calendars|Mail|Messages|Safari|\
+      CallHistoryDB|CallHistoryTransactions|CloudDocs|Dock|\
+      iCloud|Knowledge|Network|VirtualMachines|DiskImages) continue ;;
     esac
     s=$(get_size_bytes "$item") 2>/dev/null || s=0
     [ -z "$s" ] && s=0
@@ -699,9 +709,13 @@ clean_app_leftovers() {
   while IFS= read -r -d '' item; do
     local base; base=$(basename "$item")
     case "$base" in
-      com.apple.*|Apple|MobileSync|SyncServices|CrashReporter) continue ;;
+      com.apple.*|Apple|MobileSync|SyncServices|CrashReporter|\
+      Audio|Fonts|Compositions|ColorSync|Spelling|Dictionaries|\
+      AddressBook|Calendars|Mail|Messages|Safari|\
+      CallHistoryDB|CallHistoryTransactions|CloudDocs|Dock|\
+      iCloud|Knowledge|Network|VirtualMachines|DiskImages) continue ;;
     esac
-    
+
     local sz_b; sz_b=$(get_size_bytes "$item") || sz_b=0
     local sz_h; sz_h=$(format_bytes "$sz_b")
     
@@ -941,7 +955,11 @@ scan_app_leftovers_subitems_json() {
   while IFS= read -r -d '' item; do
     base=$(basename "$item")
     case "$base" in
-      com.apple.*|Apple|MobileSync|SyncServices|CrashReporter) continue ;;
+      com.apple.*|Apple|MobileSync|SyncServices|CrashReporter|\
+      Audio|Fonts|Compositions|ColorSync|Spelling|Dictionaries|\
+      AddressBook|Calendars|Mail|Messages|Safari|\
+      CallHistoryDB|CallHistoryTransactions|CloudDocs|Dock|\
+      iCloud|Knowledge|Network|VirtualMachines|DiskImages) continue ;;
     esac
     s=$(get_size_bytes "$item") 2>/dev/null || s=0
     [ "$s" -le 0 ] && continue
