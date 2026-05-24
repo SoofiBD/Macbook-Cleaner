@@ -1,376 +1,281 @@
 <!DOCTYPE html>
-<html lang="tr" data-theme="dark">
+<html lang="tr" data-theme="light">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Apple Cleanup — macOS sisteminizi hızlı ve güvenli bir şekilde temizleyin. Önbellek, geçici dosyalar, loglar ve daha fazlasını kaldırın.">
-  <meta name="keywords" content="macOS temizleme, cache temizleme, sistem optimizasyonu, Apple Cleanup, disk temizleme">
-  <meta name="author" content="Apple Cleanup">
-  <meta name="theme-color" content="#0a0a0f">
-  <meta property="og:title" content="Apple Cleanup — macOS Sistem Temizleyici">
-  <meta property="og:description" content="macOS sisteminizi hızlı ve güvenli bir şekilde temizleyin.">
-  <meta property="og:type" content="website">
-  <title>Apple Cleanup — macOS Sistem Temizleyici</title>
-  <link rel="stylesheet" href="style.css">
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🍎</text></svg>">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="Apple Cleanup — macOS sisteminizi hızlı ve güvenli bir şekilde temizleyin." />
+  <meta name="theme-color" content="#fbfbfc" />
+  <title>Apple Cleanup</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23111' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 20.5c-1.2 0-2.3-.6-3.4-1.7-2.3-2.3-3.6-5.8-3.6-8.3 0-2.6 1.7-4.5 4-4.5 1.1 0 2 .4 3 1 1-.6 1.9-1 3-1 2.3 0 4 1.9 4 4.5 0 2.5-1.3 6-3.6 8.3-1.1 1.1-2.2 1.7-3.4 1.7z'/%3E%3Cpath d='M12 6c0-1.5 1-3 2.5-3.5'/%3E%3C/svg%3E" />
 </head>
 <body>
-  <div class="container">
+  <!-- ── SVG Icon sprite ─────────────────────────────────────── -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-logo" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 20.5c-1.2 0-2.3-.6-3.4-1.7-2.3-2.3-3.6-5.8-3.6-8.3 0-2.6 1.7-4.5 4-4.5 1.1 0 2 .4 3 1 1-.6 1.9-1 3-1 2.3 0 4 1.9 4 4.5 0 2.5-1.3 6-3.6 8.3-1.1 1.1-2.2 1.7-3.4 1.7z" />
+        <path d="M12 6c0-1.5 1-3 2.5-3.5" />
+      </symbol>
 
-    <!-- ═══ Header ═══ -->
-    <header class="header" role="banner">
-      <div class="header-brand">
-        <span class="header-logo" aria-hidden="true">🍎</span>
-        <h1 class="header-title">Apple Cleanup</h1>
-        <span class="header-version">v1.0</span>
+      <!-- Category icons (1.6px stroke, rounded) -->
+      <symbol id="i-cache" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 8 12 3 3 8l9 5 9-5z"/><path d="M3 13l9 5 9-5"/><path d="M3 18l9 5 9-5"/>
+      </symbol>
+      <symbol id="i-cpu" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="5" y="5" width="14" height="14" rx="2"/><rect x="9" y="9" width="6" height="6" rx="1"/>
+        <path d="M9 2v3M15 2v3M9 19v3M15 19v3M2 9h3M2 15h3M19 9h3M19 15h3"/>
+      </symbol>
+      <symbol id="i-leftover" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z"/>
+        <path d="m10 12 4 4M14 12l-4 4"/>
+      </symbol>
+      <symbol id="i-log" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 4a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v16l-3-2-3 2-3-2-3 2-3-2V4z"/>
+        <path d="M8 7h8M8 11h8M8 15h5"/>
+      </symbol>
+      <symbol id="i-temp" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>
+      </symbol>
+      <symbol id="i-dev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 10 3 2-3 2M13 14h4"/>
+      </symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 7h16M9 7V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v3"/>
+        <path d="M6 7v13a2 2 0 0 0 2 2h8a2 2 0 0 0 2-2V7"/><path d="M10 11v6M14 11v6"/>
+      </symbol>
+      <symbol id="i-browser" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/>
+      </symbol>
+      <symbol id="i-browser-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="8"/><path d="M3 11h16M11 3a13 13 0 0 1 0 16M11 3a13 13 0 0 0 0 16"/>
+        <circle cx="19" cy="19" r="3" fill="currentColor" stroke="none"/>
+      </symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="6" y="2" width="12" height="20" rx="2.5"/><path d="M11 18h2"/>
+      </symbol>
+
+      <!-- UI icons -->
+      <symbol id="i-search" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>
+      </symbol>
+      <symbol id="i-sparkle" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3v3M12 18v3M3 12h3M18 12h3M5.6 5.6l2.1 2.1M16.3 16.3l2.1 2.1M5.6 18.4l2.1-2.1M16.3 7.7l2.1-2.1"/>
+        <circle cx="12" cy="12" r="3"/>
+      </symbol>
+      <symbol id="i-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m9 6 6 6-6 6"/>
+      </symbol>
+      <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="m5 12 5 5L20 7"/>
+      </symbol>
+      <symbol id="i-x" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M6 6 18 18M18 6 6 18"/>
+      </symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4 12H2M22 12h-2M5.6 5.6 4.2 4.2M19.8 19.8l-1.4-1.4M5.6 18.4l-1.4 1.4M19.8 4.2l-1.4 1.4"/>
+      </symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a7 7 0 0 0 10.5 10.5z"/>
+      </symbol>
+      <symbol id="i-lock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="4" y="11" width="16" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>
+      </symbol>
+      <symbol id="i-warn" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 3 2 21h20L12 3z"/><path d="M12 10v5M12 18v.5"/>
+      </symbol>
+      <symbol id="i-wrench" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14.5 4.5a4 4 0 0 1 4.5 5.5l-9.5 9.5a2 2 0 1 1-2.83-2.83l9.5-9.5a4 4 0 0 1 .33-2.67z"/>
+      </symbol>
+      <symbol id="i-spotlight" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5M11 7v4l3 1"/>
+      </symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 10 3 2-3 2M13 14h4"/>
+      </symbol>
+      <symbol id="i-info" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8v.5"/>
+      </symbol>
+      <symbol id="i-arrow-down" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 5v14M6 13l6 6 6-6"/>
+      </symbol>
+      <symbol id="i-drop" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M12 2.5c-3.5 5-6 8-6 11.5a6 6 0 0 0 12 0c0-3.5-2.5-6.5-6-11.5z"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <div class="app">
+    <!-- ═══ Top bar ═══ -->
+    <header class="topbar" role="banner">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true"><svg class="ic"><use href="#i-logo"/></svg></span>
+        <div class="brand-text">
+          <span class="brand-name">Apple Cleanup</span>
+          <span class="brand-sub">macOS bakım aracı</span>
+        </div>
       </div>
-      <button
-        class="theme-toggle"
-        id="themeToggle"
-        type="button"
-        aria-label="Tema değiştir"
-        title="Tema değiştir"
-      >
-        <span class="theme-toggle-icons" aria-hidden="true">
-          <span>🌙</span>
-          <span>☀️</span>
-        </span>
+
+      <div class="sysbar" role="status" aria-label="Sistem">
+        <div class="sys-chip">
+          <span class="sys-k">macOS</span>
+          <span class="sys-v loading" id="sysVersion">—</span>
+        </div>
+        <div class="sys-chip">
+          <span class="sys-k">Kullanıcı</span>
+          <span class="sys-v loading" id="sysUser">—</span>
+        </div>
+        <div class="sys-chip sys-chip-disk">
+          <span class="sys-k">Boş Alan</span>
+          <span class="sys-v loading" id="sysDiskFree">—</span>
+          <span class="sys-disk-bar"><span class="sys-disk-fill" id="diskBarFill"></span></span>
+        </div>
+      </div>
+
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Tema değiştir">
+        <svg class="ic ic-sun"><use href="#i-sun"/></svg>
+        <svg class="ic ic-moon"><use href="#i-moon"/></svg>
       </button>
     </header>
 
-    <!-- ═══ System Info Bar ═══ -->
-    <div class="system-bar" role="status" aria-label="Sistem bilgileri">
-      <div class="system-item">
-        <span class="label">macOS</span>
-        <span class="value loading" id="sysVersion">Yükleniyor…</span>
-      </div>
-      <div class="system-separator" aria-hidden="true"></div>
-      <div class="system-item">
-        <span class="label">Kullanıcı</span>
-        <span class="value loading" id="sysUser">Yükleniyor…</span>
-      </div>
-      <div class="system-separator" aria-hidden="true"></div>
-      <div class="system-item">
-        <span class="label">Boş Alan</span>
-        <span class="value loading" id="sysDiskFree">Yükleniyor…</span>
-      </div>
-      <div class="disk-bar-wrap">
-        <div class="disk-bar" role="progressbar" aria-label="Disk kullanımı" aria-valuenow="0" aria-valuemin="0" aria-valuemax="100">
-          <div class="disk-bar-fill" id="diskBarFill"></div>
-        </div>
-      </div>
-    </div>
+    <!-- ═══ Hero ═══ -->
+    <section class="hero" id="hero" data-state="idle">
+      <div class="hero-left">
+        <div class="hero-eyebrow" id="heroEyebrow">Durum · Henüz tarama yapılmadı</div>
+        <h1 class="hero-title" id="heroTitle">Mac'inizi temizleyin.</h1>
+        <p class="hero-lead" id="heroLead">
+          Cache, log, geçici dosya ve uygulama kalıntılarını tarayın.
+          Hiçbir şey siz onaylamadan silinmez.
+        </p>
 
-    <!-- ═══ Quick Actions ═══ -->
-    <div class="quick-actions">
-      <div class="quick-actions-left">
-        <button class="btn-quick" id="btnSelectAll" type="button">✓ Tümünü Seç</button>
-        <button class="btn-quick" id="btnSelectNone" type="button">✕ Hiçbirini Seçme</button>
-      </div>
-      <div class="total-size" id="totalSize"></div>
-    </div>
-
-    <!-- ═══ Category Cards Grid ═══ -->
-    <main>
-      <div class="cards-grid" id="cardsGrid" role="list" aria-label="Temizleme kategorileri">
-
-        <!-- Card: user_cache -->
-        <div class="category-card card-enter selected" data-category="user_cache" data-index="1" role="listitem">
-          <div class="card-top">
-            <div style="display:flex;align-items:center;gap:14px">
-              <div class="card-icon-wrap" aria-hidden="true">📦</div>
-              <div class="card-info">
-                <div class="card-name">Kullanıcı Cache</div>
-                <div class="card-desc">Uygulama önbellek dosyaları</div>
-              </div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" checked aria-label="Kullanıcı Cache seç">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="card-meta">
-            <div class="card-size">
-              <span class="size-badge" data-size="user_cache">— Taranmadı</span>
-            </div>
-          </div>
+        <!-- Idle / Scanned big number -->
+        <div class="hero-number" id="heroNumber" hidden>
+          <span class="hn-value" id="hnValue">0</span>
+          <span class="hn-unit" id="hnUnit">GB</span>
+          <span class="hn-tag">temizlenebilir</span>
         </div>
 
-        <!-- Card: system_cache -->
-        <div class="category-card card-enter selected" data-category="system_cache" data-index="2" role="listitem">
-          <div class="card-top">
-            <div style="display:flex;align-items:center;gap:14px">
-              <div class="card-icon-wrap" aria-hidden="true">🖥️</div>
-              <div class="card-info">
-                <div class="card-name">Sistem Cache <span class="sudo-badge" title="Yönetici izni gerektirir">🔒 sudo</span></div>
-                <div class="card-desc">Sistem seviyesi önbellek</div>
-              </div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" checked aria-label="Sistem Cache seç">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="card-meta">
-            <div class="card-size">
-              <span class="size-badge" data-size="system_cache">— Taranmadı</span>
-            </div>
-          </div>
+        <!-- Stacked bar (post-scan) -->
+        <div class="hero-bar" id="heroBar" hidden>
+          <div class="hero-bar-track" id="heroBarTrack" aria-label="Kategori dağılımı"></div>
+          <div class="hero-bar-legend" id="heroBarLegend"></div>
         </div>
 
-        <!-- Card: app_leftovers -->
-        <div class="category-card card-enter selected" data-category="app_leftovers" data-index="3" role="listitem">
-          <div class="card-top">
-            <div style="display:flex;align-items:center;gap:14px">
-              <div class="card-icon-wrap" aria-hidden="true">📂</div>
-              <div class="card-info">
-                <div class="card-name">Uygulama Kalıntıları</div>
-                <div class="card-desc">Kaldırılmış uygulama artıkları</div>
-              </div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" checked aria-label="Uygulama Kalıntıları seç">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="card-meta">
-            <div class="card-size">
-              <span class="size-badge" data-size="app_leftovers">— Taranmadı</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Card: logs -->
-        <div class="category-card card-enter selected" data-category="logs" data-index="4" role="listitem">
-          <div class="card-top">
-            <div style="display:flex;align-items:center;gap:14px">
-              <div class="card-icon-wrap" aria-hidden="true">📋</div>
-              <div class="card-info">
-                <div class="card-name">Loglar</div>
-                <div class="card-desc">Sistem ve uygulama kayıtları</div>
-              </div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" checked aria-label="Loglar seç">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="card-meta">
-            <div class="card-size">
-              <span class="size-badge" data-size="logs">— Taranmadı</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Card: temp_files -->
-        <div class="category-card card-enter selected" data-category="temp_files" data-index="5" role="listitem">
-          <div class="card-top">
-            <div style="display:flex;align-items:center;gap:14px">
-              <div class="card-icon-wrap" aria-hidden="true">🗃️</div>
-              <div class="card-info">
-                <div class="card-name">Geçici Dosyalar</div>
-                <div class="card-desc">Geçici ve ara dosyalar</div>
-              </div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" checked aria-label="Geçici Dosyalar seç">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="card-meta">
-            <div class="card-size">
-              <span class="size-badge" data-size="temp_files">— Taranmadı</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Card: developer -->
-        <div class="category-card card-enter selected" data-category="developer" data-index="6" role="listitem">
-          <div class="card-top">
-            <div style="display:flex;align-items:center;gap:14px">
-              <div class="card-icon-wrap" aria-hidden="true">🛠️</div>
-              <div class="card-info">
-                <div class="card-name">Geliştirici</div>
-                <div class="card-desc">Xcode DerivedData ve bozuk linkler</div>
-              </div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" checked aria-label="Geliştirici seç">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="card-meta">
-            <div class="card-size">
-              <span class="size-badge" data-size="developer">— Taranmadı</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Card: trash -->
-        <div class="category-card card-enter selected" data-category="trash" data-index="7" role="listitem">
-          <div class="card-top">
-            <div style="display:flex;align-items:center;gap:14px">
-              <div class="card-icon-wrap" aria-hidden="true">🗑️</div>
-              <div class="card-info">
-                <div class="card-name">Çöp Kutusu</div>
-                <div class="card-desc">Çöp kutusundaki dosyalar</div>
-              </div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" checked aria-label="Çöp Kutusu seç">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="card-meta">
-            <div class="card-size">
-              <span class="size-badge" data-size="trash">— Taranmadı</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Card: browser_cache -->
-        <div class="category-card card-enter" data-category="browser_cache" data-index="8" role="listitem">
-          <div class="card-top">
-            <div style="display:flex;align-items:center;gap:14px">
-              <div class="card-icon-wrap" aria-hidden="true">🌐</div>
-              <div class="card-info">
-                <div class="card-name">Tarayıcı Cache</div>
-                <div class="card-desc">Sadece önbellek — çerezler &amp; oturumlar korunur</div>
-              </div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" aria-label="Tarayıcı Cache seç">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="card-meta">
-            <div class="card-size">
-              <span class="size-badge" data-size="browser_cache">— Taranmadı</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Card: browser_full -->
-        <div class="category-card card-enter card-danger" data-category="browser_full" data-index="9" role="listitem">
-          <div class="card-top">
-            <div style="display:flex;align-items:center;gap:14px">
-              <div class="card-icon-wrap" aria-hidden="true">⚠️</div>
-              <div class="card-info">
-                <div class="card-name">Tarayıcı Tüm Veri</div>
-                <div class="card-desc">Çerezler, geçmiş, profil verisi</div>
-                <div class="card-warn-label">Oturumlar Kapanır!</div>
-              </div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" aria-label="Tarayıcı Tüm Veri seç">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="card-meta">
-            <div class="card-size">
-              <span class="size-badge" data-size="browser_full">— Taranmadı</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Card: ios_backups -->
-        <div class="category-card card-enter card-danger" data-category="ios_backups" data-index="10" role="listitem">
-          <div class="card-top">
-            <div style="display:flex;align-items:center;gap:14px">
-              <div class="card-icon-wrap" aria-hidden="true">📱</div>
-              <div class="card-info">
-                <div class="card-name">iOS Yedekleri</div>
-                <div class="card-desc">iPhone/iPad MobileSync yedekleri</div>
-                <div class="card-warn-label">Silmeden önce kontrol edin!</div>
-              </div>
-            </div>
-            <label class="toggle-switch">
-              <input type="checkbox" aria-label="iOS Yedekleri seç">
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-          <div class="card-meta">
-            <div class="card-size">
-              <span class="size-badge" data-size="ios_backups">— Taranmadı</span>
-            </div>
-          </div>
-        </div>
-
-      </div>
-    </main>
-
-    <!-- ═══ Maintenance Section ═══ -->
-    <section class="maintenance-section" aria-label="Sistem bakım araçları">
-      <div class="maintenance-header">
-        <span class="maintenance-icon" aria-hidden="true">🔧</span>
-        <div>
-          <div class="maintenance-title">Sistem Bakımı</div>
-          <div class="maintenance-subtitle">Temizlik dışı onarım araçları — seçim gerektirmez</div>
-        </div>
-      </div>
-      <div class="maintenance-cards">
-        <div class="maintenance-card" id="spotlightCard">
-          <div class="maintenance-card-left">
-            <span class="maintenance-card-icon" aria-hidden="true">🔦</span>
-            <div class="maintenance-card-info">
-              <div class="maintenance-card-name">Spotlight İndeksini Yenile</div>
-              <div class="maintenance-card-desc">
-                Disk alanının yanlış gösterilmesi (hayalet veri) sorununu çözer.
-                Arka planda çalışır, birkaç dakika sürebilir. macOS yeniden tarar.
-              </div>
-            </div>
-          </div>
-          <button class="btn-maintenance" id="btnSpotlight" type="button">
+        <div class="hero-actions">
+          <button class="btn btn-primary" id="btnScan" type="button">
             <span class="spinner" aria-hidden="true"></span>
-            <span class="btn-text">🔦 Yenile</span>
+            <svg class="ic"><use href="#i-search"/></svg>
+            <span class="btn-text">Tara</span>
+            <span class="btn-kbd" aria-hidden="true">⌘S</span>
+          </button>
+          <button class="btn btn-accent" id="btnClean" type="button" disabled>
+            <span class="spinner" aria-hidden="true"></span>
+            <svg class="ic"><use href="#i-sparkle"/></svg>
+            <span class="btn-text">Temizle</span>
+            <span class="btn-kbd" aria-hidden="true">⌘⏎</span>
           </button>
         </div>
       </div>
+
+      <!-- Right: animated disk donut -->
+      <div class="hero-right" aria-hidden="true">
+        <svg class="donut" viewBox="0 0 200 200">
+          <circle class="donut-track" cx="100" cy="100" r="78" fill="none" stroke-width="14"/>
+          <circle class="donut-fill" id="donutFill" cx="100" cy="100" r="78" fill="none" stroke-width="14" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 100 100)"/>
+          <g class="donut-label">
+            <text x="100" y="92" class="donut-num" id="donutNum" text-anchor="middle">—</text>
+            <text x="100" y="115" class="donut-cap" text-anchor="middle">disk kullanımı</text>
+          </g>
+        </svg>
+      </div>
     </section>
 
-    <!-- ═══ Action Buttons ═══ -->
-    <div class="actions">
-      <button class="btn btn-scan" id="btnScan" type="button">
-        <span class="spinner" aria-hidden="true"></span>
-        <span class="btn-text">🔍 Tara</span>
-      </button>
-      <button class="btn btn-clean" id="btnClean" type="button" disabled>
-        <span class="spinner" aria-hidden="true"></span>
-        <span class="btn-text">🧹 Temizle</span>
-      </button>
-    </div>
-
-    <!-- ═══ Results Panel ═══ -->
-    <section class="results-panel" id="resultsPanel" aria-live="polite">
-      <div class="results-header">
-        <span class="results-icon" aria-hidden="true">✨</span>
-        <div>
-          <div class="results-title" id="resultsTitle">Temizlik Tamamlandı!</div>
-          <div class="results-subtitle" id="resultsSubtitle"></div>
+    <!-- ═══ Categories ═══ -->
+    <section class="section">
+      <div class="section-head">
+        <div class="section-titleblock">
+          <h2 class="section-title">Kategoriler</h2>
+          <span class="section-sub" id="categoryCount">10 kategori</span>
+        </div>
+        <div class="section-tools">
+          <button class="chip-btn" id="btnSelectAll" type="button">
+            <svg class="ic"><use href="#i-check"/></svg>Tümünü seç
+          </button>
+          <button class="chip-btn" id="btnSelectNone" type="button">
+            <svg class="ic"><use href="#i-x"/></svg>Hiçbirini seçme
+          </button>
         </div>
       </div>
-      <div class="results-freed" id="resultsFreed"></div>
-      <div class="results-details" id="resultsDetails"></div>
+
+      <ul class="cat-list" id="catList" role="list">
+      </ul>
     </section>
 
-    <!-- ═══ Terminal Panel ═══ -->
-    <section class="terminal" aria-label="İşlem kayıtları">
-      <div class="terminal-header">
-        <span class="terminal-dot red" aria-hidden="true"></span>
-        <span class="terminal-dot yellow" aria-hidden="true"></span>
-        <span class="terminal-dot green" aria-hidden="true"></span>
-        <span class="terminal-title">apple-cleanup — terminal</span>
+    <!-- ═══ Results panel ═══ -->
+    <section class="results" id="resultsPanel" hidden>
+      <div class="results-head">
+        <span class="results-dot"></span>
+        <div class="results-titleblock">
+          <div class="results-title" id="resultsTitle">Temizlik tamamlandı</div>
+          <div class="results-sub" id="resultsSubtitle"></div>
+        </div>
+        <button class="icon-btn results-close" id="resultsClose" type="button" aria-label="Kapat">
+          <svg class="ic"><use href="#i-x"/></svg>
+        </button>
       </div>
-      <div class="terminal-body" id="terminalBody" role="log" aria-live="polite">
-        <!-- Log lines appear here -->
+      <div class="results-big" id="resultsFreed"></div>
+      <div class="results-chips" id="resultsDetails"></div>
+    </section>
+
+    <!-- ═══ Maintenance ═══ -->
+    <section class="section">
+      <div class="section-head">
+        <div class="section-titleblock">
+          <h2 class="section-title">Sistem Bakımı</h2>
+          <span class="section-sub">Temizlik dışı onarım araçları</span>
+        </div>
+      </div>
+      <ul class="cat-list cat-list-tight" role="list">
+        <li class="cat cat-maint" id="spotlightCard">
+          <div class="cat-row cat-row-static">
+            <span class="cat-ic"><svg class="ic"><use href="#i-spotlight"/></svg></span>
+            <span class="cat-meta">
+              <span class="cat-name">Spotlight İndeksini Yenile</span>
+              <span class="cat-desc">Disk alanının yanlış gösterilmesi (hayalet veri) sorununu çözer. Arka planda çalışır.</span>
+            </span>
+            <button class="btn btn-ghost btn-sm" id="btnSpotlight" type="button">
+              <span class="spinner" aria-hidden="true"></span>
+              <span class="btn-text">Yenile</span>
+            </button>
+          </div>
+        </li>
+      </ul>
+    </section>
+
+    <!-- ═══ Terminal (drawer) ═══ -->
+    <section class="term" id="term" aria-label="İşlem kayıtları">
+      <button class="term-head" id="termHead" type="button" aria-expanded="false">
+        <span class="term-headleft">
+          <svg class="ic"><use href="#i-terminal"/></svg>
+          <span class="term-title">Terminal</span>
+          <span class="term-badge" id="termCount">0</span>
+        </span>
+        <span class="term-headright">
+          <span class="term-hint">İşlem kayıtları</span>
+          <svg class="ic term-chev"><use href="#i-chev"/></svg>
+        </span>
+      </button>
+      <div class="term-body" id="terminalBody" role="log" aria-live="polite">
       </div>
     </section>
 
-    <!-- ═══ Footer ═══ -->
-    <footer class="footer">
-      Apple Cleanup v1.0 — macOS sistem temizleme aracı
+    <footer class="foot">
+      <span>Apple Cleanup v1.1</span>
+      <span class="foot-dot">·</span>
+      <span>macOS sistem temizleme aracı</span>
+      <span class="foot-dot">·</span>
+      <a href="https://github.com" class="foot-link">GitHub</a>
     </footer>
-
   </div>
 
   <script src="script.js"></script>
