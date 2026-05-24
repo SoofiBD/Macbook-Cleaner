@@ -12,22 +12,64 @@
   /* ──────────────────────────────────────────────────────────
      Constants & data
      ────────────────────────────────────────────────────────── */
-  const CATEGORY_MAP = {
-    user_cache:    { index: 1, name: 'Kullanıcı Cache',        color: '#4d8eff' },
-    system_cache:  { index: 2, name: 'Sistem Cache',           color: '#6f6ff7' },
-    app_leftovers: { index: 3, name: 'Uygulama Kalıntıları',   color: '#a26bf7' },
-    logs:          { index: 4, name: 'Loglar',                 color: '#0bb8c9' },
-    temp_files:    { index: 5, name: 'Geçici Dosyalar',        color: '#16a34a' },
-    developer:     { index: 6, name: 'Geliştirici',            color: '#d97706' },
-    trash:         { index: 7, name: 'Çöp Kutusu',             color: '#8b8f99' },
-    browser_cache: { index: 8, name: 'Tarayıcı Cache',         color: '#f59e0b' },
-    browser_full:  { index: 9, name: 'Tarayıcı Tüm Veri',      color: '#dc2626' },
-    ios_backups:   { index: 10, name: 'iOS Yedekleri',         color: '#ef4444' },
-  };
+  const CATEGORIES = [
+    {
+      key: 'user_cache',    index: 1,  name: 'Kullanıcı Cache',
+      desc: 'Uygulama önbellek dosyaları',
+      icon: 'i-cache', color: '#4d8eff', defaultChecked: true, danger: false, tags: [],
+    },
+    {
+      key: 'system_cache',  index: 2,  name: 'Sistem Cache',
+      desc: 'Sistem seviyesi önbellek',
+      icon: 'i-cpu', color: '#6f6ff7', defaultChecked: true, danger: false,
+      tags: [{ icon: 'i-lock', label: 'sudo', style: 'amber' }],
+    },
+    {
+      key: 'app_leftovers', index: 3,  name: 'Uygulama Kalıntıları',
+      desc: 'Kaldırılmış uygulama artıkları',
+      icon: 'i-leftover', color: '#a26bf7', defaultChecked: true, danger: false, tags: [],
+    },
+    {
+      key: 'logs',          index: 4,  name: 'Loglar',
+      desc: 'Sistem ve uygulama kayıtları',
+      icon: 'i-log', color: '#0bb8c9', defaultChecked: true, danger: false, tags: [],
+    },
+    {
+      key: 'temp_files',    index: 5,  name: 'Geçici Dosyalar',
+      desc: 'Geçici ve ara dosyalar',
+      icon: 'i-temp', color: '#16a34a', defaultChecked: true, danger: false, tags: [],
+    },
+    {
+      key: 'developer',     index: 6,  name: 'Geliştirici',
+      desc: 'Xcode DerivedData ve bozuk linkler',
+      icon: 'i-dev', color: '#d97706', defaultChecked: true, danger: false, tags: [],
+    },
+    {
+      key: 'trash',         index: 7,  name: 'Çöp Kutusu',
+      desc: 'Çöp kutusundaki dosyalar',
+      icon: 'i-trash', color: '#8b8f99', defaultChecked: true, danger: false, tags: [],
+    },
+    {
+      key: 'browser_cache', index: 8,  name: 'Tarayıcı Cache',
+      desc: 'Sadece önbellek — çerezler & oturumlar korunur',
+      icon: 'i-browser', color: '#f59e0b', defaultChecked: false, danger: false, tags: [],
+    },
+    {
+      key: 'browser_full',  index: 9,  name: 'Tarayıcı Tüm Veri',
+      desc: 'Çerezler, geçmiş ve profil verisi',
+      icon: 'i-browser-warn', color: '#dc2626', defaultChecked: false, danger: true,
+      tags: [{ icon: 'i-warn', label: 'oturumlar kapanır', style: 'red' }],
+    },
+    {
+      key: 'ios_backups',   index: 10, name: 'iOS Yedekleri',
+      desc: 'iPhone/iPad MobileSync yedekleri',
+      icon: 'i-phone', color: '#ef4444', defaultChecked: false, danger: true,
+      tags: [{ icon: 'i-warn', label: 'silmeden önce kontrol', style: 'red' }],
+    },
+  ];
 
-  const KEY_BY_INDEX = Object.fromEntries(
-    Object.entries(CATEGORY_MAP).map(([k, v]) => [v.index, k])
-  );
+  const KEY_BY_INDEX = Object.fromEntries(CATEGORIES.map((c) => [c.index, c.key]));
+  const CAT_BY_KEY   = Object.fromEntries(CATEGORIES.map((c) => [c.key, c]));
 
   /* ──────────────────────────────────────────────────────────
      DOM
@@ -74,8 +116,7 @@
 
     btnSpotlight:  $('#btnSpotlight'),
     categoryCount: $('#categoryCount'),
-
-    cats:          $$('.cat[data-category]'),
+    catList:       $('#catList'),
   };
 
   /* ──────────────────────────────────────────────────────────
@@ -85,8 +126,7 @@
   let isLoading = false;
   let useMock = false;          // toggled after first failed fetch
   let termLineCount = 0;
-  const accentByKey = {};
-  Object.entries(CATEGORY_MAP).forEach(([k, v]) => { accentByKey[k] = v.color; });
+  const accentByKey = Object.fromEntries(CATEGORIES.map((c) => [c.key, c.color]));
 
   /* ──────────────────────────────────────────────────────────
      Theme + accent
@@ -155,6 +195,44 @@
     el.term.setAttribute('data-open', String(!open));
     el.termHead.setAttribute('aria-expanded', String(!open));
   });
+
+  /* ──────────────────────────────────────────────────────────
+     Render categories
+     ────────────────────────────────────────────────────────── */
+  function renderCategories() {
+    CATEGORIES.forEach((cat) => {
+      const li = document.createElement('li');
+      li.className = ['cat', cat.defaultChecked && 'selected', cat.danger && 'cat-danger']
+        .filter(Boolean).join(' ');
+      li.dataset.category = cat.key;
+      li.dataset.index    = String(cat.index);
+
+      const tagsHtml = cat.tags.map((t) =>
+        `<span class="tag tag-${t.style}"><svg class="ic"><use href="#${t.icon}"/></svg>${escapeHtml(t.label)}</span>`
+      ).join('');
+
+      li.innerHTML = `
+        <button class="cat-row" type="button" data-role="row">
+          <span class="cat-ic"><svg class="ic"><use href="#${cat.icon}"/></svg></span>
+          <span class="cat-meta">
+            <span class="cat-name">${escapeHtml(cat.name)}${tagsHtml ? ' ' + tagsHtml : ''}</span>
+            <span class="cat-desc">${escapeHtml(cat.desc)}</span>
+          </span>
+          <span class="cat-bar"><span class="cat-bar-fill"></span></span>
+          <span class="cat-size" data-size="${cat.key}">—</span>
+          <label class="switch" onclick="event.stopPropagation()">
+            <input type="checkbox" ${cat.defaultChecked ? 'checked' : ''} />
+            <span class="switch-slider"></span>
+          </label>
+          <svg class="ic cat-chev"><use href="#i-chev"/></svg>
+        </button>
+      `;
+      el.catList.appendChild(li);
+    });
+
+    el.cats = $$('.cat[data-category]');
+    if (el.categoryCount) el.categoryCount.textContent = `${CATEGORIES.length} kategori`;
+  }
 
   /* ──────────────────────────────────────────────────────────
      Utilities
@@ -420,7 +498,7 @@
           });
         }
 
-        termLog(`  ${CATEGORY_MAP[key]?.name || key}: ${info.size_human || formatBytes(info.size_bytes)}`);
+        termLog(`  ${CAT_BY_KEY[key]?.name || key}: ${info.size_human || formatBytes(info.size_bytes)}`);
 
         if (info.subitems && info.subitems.length > 0) {
           renderSubitems(card, key, info.subitems);
@@ -479,7 +557,7 @@
       sw.className = 'sw';
       sw.style.background = accentByKey[key];
       const txt = document.createElement('span');
-      txt.innerHTML = `${CATEGORY_MAP[key]?.name || key} <b>${info.size_human}</b>`;
+      txt.innerHTML = `${escapeHtml(CAT_BY_KEY[key]?.name || key)} <b>${escapeHtml(info.size_human)}</b>`;
       item.appendChild(sw);
       item.appendChild(txt);
       el.heroBarLegend.appendChild(item);
@@ -553,7 +631,7 @@
       termLog('Lütfen en az bir kategori seçin.', 'error');
       return;
     }
-    const names = selected.map((idx) => CATEGORY_MAP[KEY_BY_INDEX[idx]]?.name || `#${idx}`);
+    const names = selected.map((idx) => CAT_BY_KEY[KEY_BY_INDEX[idx]]?.name || `#${idx}`);
     const confirmed = confirm(
       `Şu kategoriler temizlenecek:\n\n${names.map((n) => `• ${n}`).join('\n')}\n\nDevam etmek istiyor musunuz?`
     );
@@ -593,7 +671,7 @@
 
       el.resultsChips.innerHTML = '';
       (data.details || []).forEach((d) => {
-        const name = CATEGORY_MAP[d.category]?.name || d.category;
+        const name = CAT_BY_KEY[d.category]?.name || d.category;
         const chip = document.createElement('div');
         chip.className = 'result-chip';
         chip.innerHTML = `${escapeHtml(name)} <span class="chip-freed">${escapeHtml(d.freed)}</span>`;
@@ -655,51 +733,6 @@
       setLoading(el.btnSpotlight, false);
     }
   }
-
-  /* ──────────────────────────────────────────────────────────
-     Card interactions
-     ────────────────────────────────────────────────────────── */
-  el.cats.forEach((card) => {
-    const row = $('[data-role="row"]', card);
-    const cb = $('input[type="checkbox"]', card);
-
-    cb.addEventListener('change', () => {
-      card.classList.toggle('selected', cb.checked);
-    });
-
-    row.addEventListener('click', (e) => {
-      // toggle expansion when there are sub-items; otherwise toggle selection
-      if (e.target.closest('.switch')) return;
-      const hasSubs = card.querySelector('.subitems');
-      if (hasSubs) {
-        const open = card.getAttribute('data-open') === 'true';
-        card.setAttribute('data-open', String(!open));
-      } else {
-        cb.checked = !cb.checked;
-        cb.dispatchEvent(new Event('change'));
-      }
-    });
-  });
-
-  el.btnSelectAll.addEventListener('click', () => {
-    el.cats.forEach((card) => {
-      const cb = $('input[type="checkbox"]', card);
-      cb.checked = true;
-      card.classList.add('selected');
-      $$('.subitems input[type="checkbox"]', card).forEach((s) => (s.checked = true));
-    });
-    termLog('Tüm kategoriler seçildi.', 'info');
-  });
-
-  el.btnSelectNone.addEventListener('click', () => {
-    el.cats.forEach((card) => {
-      const cb = $('input[type="checkbox"]', card);
-      cb.checked = false;
-      card.classList.remove('selected');
-      $$('.subitems input[type="checkbox"]', card).forEach((s) => (s.checked = false));
-    });
-    termLog('Tüm seçimler kaldırıldı.', 'info');
-  });
 
   /* ──────────────────────────────────────────────────────────
      Bindings
@@ -783,6 +816,50 @@
      Init
      ────────────────────────────────────────────────────────── */
   el.term.setAttribute('data-open', 'false');
+  renderCategories();
+
+  // Wire card interactions now that el.cats is populated
+  el.cats.forEach((card) => {
+    const row = $('[data-role="row"]', card);
+    const cb  = $('input[type="checkbox"]', card);
+
+    cb.addEventListener('change', () => {
+      card.classList.toggle('selected', cb.checked);
+    });
+
+    row.addEventListener('click', (e) => {
+      if (e.target.closest('.switch')) return;
+      const hasSubs = card.querySelector('.subitems');
+      if (hasSubs) {
+        const open = card.getAttribute('data-open') === 'true';
+        card.setAttribute('data-open', String(!open));
+      } else {
+        cb.checked = !cb.checked;
+        cb.dispatchEvent(new Event('change'));
+      }
+    });
+  });
+
+  el.btnSelectAll.addEventListener('click', () => {
+    el.cats.forEach((card) => {
+      const cb = $('input[type="checkbox"]', card);
+      cb.checked = true;
+      card.classList.add('selected');
+      $$('.subitems input[type="checkbox"]', card).forEach((s) => (s.checked = true));
+    });
+    termLog('Tüm kategoriler seçildi.', 'info');
+  });
+
+  el.btnSelectNone.addEventListener('click', () => {
+    el.cats.forEach((card) => {
+      const cb = $('input[type="checkbox"]', card);
+      cb.checked = false;
+      card.classList.remove('selected');
+      $$('.subitems input[type="checkbox"]', card).forEach((s) => (s.checked = false));
+    });
+    termLog('Tüm seçimler kaldırıldı.', 'info');
+  });
+
   termLog('Apple Cleanup başlatıldı.', 'success');
   fetchStatus();
 })();
