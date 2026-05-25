@@ -66,6 +66,17 @@
       icon: 'i-phone', color: '#ef4444', defaultChecked: false, danger: true,
       tags: [{ icon: 'i-warn', label: 'silmeden önce kontrol', style: 'red' }],
     },
+    {
+      key: 'app_uninstaller', index: 11, name: 'Tam Uygulama Kaldırıcı',
+      desc: '/Applications uygulamaları ve tüm kalıntıları',
+      icon: 'i-uninstall', color: '#c2410c', defaultChecked: false, danger: true,
+      tags: [{ icon: 'i-warn', label: 'uygulamayı siler', style: 'red' }],
+    },
+    {
+      key: 'mail_downloads', index: 12, name: 'Mail İndirilenleri',
+      desc: 'Mail eklentilerinden indirilen dosyalar',
+      icon: 'i-mail', color: '#0ea5e9', defaultChecked: true, danger: false, tags: [],
+    },
   ];
 
   const KEY_BY_INDEX = Object.fromEntries(CATEGORIES.map((c) => [c.index, c.key]));
@@ -337,16 +348,18 @@
 
     if (url === '/api/scan') {
       const sizes = {
-        user_cache:    2.4 * 1024 * 1024 * 1024,
-        system_cache:  680 * 1024 * 1024,
-        app_leftovers: 1.1 * 1024 * 1024 * 1024,
-        logs:          410 * 1024 * 1024,
-        temp_files:    920 * 1024 * 1024,
-        developer:     6.8 * 1024 * 1024 * 1024,
-        trash:         3.2 * 1024 * 1024 * 1024,
-        browser_cache: 1.6 * 1024 * 1024 * 1024,
-        browser_full:  3.8 * 1024 * 1024 * 1024,
-        ios_backups:   12.4 * 1024 * 1024 * 1024,
+        user_cache:      2.4 * 1024 * 1024 * 1024,
+        system_cache:    680 * 1024 * 1024,
+        app_leftovers:   1.1 * 1024 * 1024 * 1024,
+        logs:            410 * 1024 * 1024,
+        temp_files:      920 * 1024 * 1024,
+        developer:       6.8 * 1024 * 1024 * 1024,
+        trash:           3.2 * 1024 * 1024 * 1024,
+        browser_cache:   1.6 * 1024 * 1024 * 1024,
+        browser_full:    3.8 * 1024 * 1024 * 1024,
+        ios_backups:     12.4 * 1024 * 1024 * 1024,
+        app_uninstaller: 4.2 * 1024 * 1024 * 1024,
+        mail_downloads:  350 * 1024 * 1024,
       };
       const total = Object.values(sizes).reduce((a, b) => a + b, 0);
       const scan = {};
@@ -374,6 +387,17 @@
         { id: 'aaaa1111', name: 'iPhone 15 Pro — 2024-12-04', size_human: '6.8 GB' },
         { id: 'bbbb2222', name: 'iPad Pro — 2024-09-22',       size_human: '5.1 GB' },
         { id: 'cccc3333', name: 'iPhone 13 — 2023-06-12',      size_human: '512 MB' },
+      ];
+      scan.app_uninstaller.subitems = [
+        { id: 'Slack',          name: 'Slack',          bundle_id: 'com.tinyspeck.slackmacgap', size_human: '1.2 GB' },
+        { id: 'Zoom',           name: 'Zoom',           bundle_id: 'us.zoom.xos',              size_human: '850 MB' },
+        { id: 'Spotify',        name: 'Spotify',        bundle_id: 'com.spotify.client',       size_human: '680 MB' },
+        { id: 'Microsoft Word', name: 'Microsoft Word', bundle_id: 'com.microsoft.Word',       size_human: '1.5 GB' },
+      ];
+      scan.mail_downloads.subitems = [
+        { id: 'report.pdf',  name: 'report.pdf',  size_human: '140 MB' },
+        { id: 'photo.jpg',   name: 'photo.jpg',   size_human: '85 MB'  },
+        { id: 'archive.zip', name: 'archive.zip', size_human: '125 MB' },
       ];
 
       return {
@@ -579,6 +603,8 @@
       else if (key === 'developer') checkedAttr = 'checked';
       else if (key === 'browser_full') checkedAttr = '';
       else if (key === 'ios_backups') checkedAttr = '';
+      else if (key === 'app_uninstaller') checkedAttr = '';
+      else if (key === 'mail_downloads') checkedAttr = 'checked';
 
       let badge = '';
       if (key === 'app_leftovers') {
@@ -587,6 +613,8 @@
         badge = `<span class="subitem-badge ${cls}">${label}</span>`;
       } else if (key === 'ios_backups') {
         badge = `<span class="subitem-badge orphaned">yedek</span>`;
+      } else if (key === 'app_uninstaller') {
+        badge = `<span class="subitem-badge orphaned">uygulama</span>`;
       }
 
       row.innerHTML = `
@@ -655,6 +683,7 @@
         browser_full_selected: getSelectedSubitems('browser_full'),
         developer_selected: getSelectedSubitems('developer'),
         ios_backups_selected: getSelectedSubitems('ios_backups'),
+        app_uninstaller_selected: getSelectedSubitems('app_uninstaller'),
       };
       const data = await apiFetch('/api/clean', {
         method: 'POST',
