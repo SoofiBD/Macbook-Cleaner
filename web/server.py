@@ -127,6 +127,12 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             self._handle_clean()
         elif parsed.path == "/api/spotlight-reindex":
             self._handle_spotlight_reindex()
+        elif parsed.path == "/api/flush-dns":
+            self._handle_flush_dns()
+        elif parsed.path == "/api/purge-ram":
+            self._handle_purge_ram()
+        elif parsed.path == "/api/launchagents-clean":
+            self._handle_launchagents_clean()
         else:
             self._send_error_json("Not found", 404)
 
@@ -203,6 +209,27 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         data, err = self._run_script(["--spotlight-reindex"], timeout=10)
         if err:
             self._send_error_json(f"Spotlight hatası: {err}")
+        else:
+            self._send_json(data)
+
+    def _handle_flush_dns(self):
+        data, err = self._run_script(["--flush-dns"], timeout=15)
+        if err:
+            self._send_error_json(f"DNS temizleme hatası: {err}")
+        else:
+            self._send_json(data)
+
+    def _handle_purge_ram(self):
+        data, err = self._run_script(["--purge-ram"], timeout=30)
+        if err:
+            self._send_error_json(f"RAM temizleme hatası: {err}")
+        else:
+            self._send_json(data)
+
+    def _handle_launchagents_clean(self):
+        data, err = self._run_script(["--launchagents-clean"], timeout=30)
+        if err:
+            self._send_error_json(f"LaunchAgents temizleme hatası: {err}")
         else:
             self._send_json(data)
 
