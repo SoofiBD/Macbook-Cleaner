@@ -79,7 +79,7 @@ CATEGORIES=(
   "ios_backups|iOS Yedekleri|scan_ios_backups|clean_ios_backups|0|caution|1"
   "app_uninstaller|Tam Uygulama Kaldırıcı|scan_app_uninstaller|clean_app_uninstaller|0|caution|0"
   "mail_downloads|Mail İndirilenleri|scan_mail_downloads|clean_mail_downloads|0|safe|1"
-  "diagnostic_reports|Tanılama Raporları|scan_diagnostic_reports|clean_diagnostic_reports|0|safe|1"
+  "diagnostic_reports|Tanılama Raporları|scan_diagnostic_reports|clean_diagnostic_reports|0|safe|0"
   "quicklook_cache|QuickLook Cache|scan_quicklook_cache|clean_quicklook_cache|0|safe|1"
   "saved_app_state|Kaydedilmiş Uygulama Durumu|scan_saved_app_state|clean_saved_app_state|0|caution|1"
   "other_trash|Diğer Ciltlerin Çöpü|scan_other_trash|clean_other_trash|0|safe|1"
@@ -485,7 +485,7 @@ clean_diagnostic_reports() {
 scan_quicklook_cache() {
   local i; i=$(cat_index_by_id quicklook_cache)
   local qldir
-  qldir="$(getconf DARWIN_USER_CACHE_DIR 2>/dev/null)com.apple.QuickLook.thumbnailcache"
+  qldir="$(getconf DARWIN_USER_CACHE_DIR 2>/dev/null)com.apple.quicklook.ThumbnailsAgent/com.apple.QuickLook.thumbnailcache"
   CAT_SIZES[$i]=$(get_dir_size_bytes "$qldir")
 }
 clean_quicklook_cache() {
@@ -1201,7 +1201,8 @@ scan_app_leftovers_subitems_json() {
       Audio|Fonts|Compositions|ColorSync|Spelling|Dictionaries|\
       AddressBook|Calendars|Mail|Messages|Safari|\
       CallHistoryDB|CallHistoryTransactions|CloudDocs|Dock|\
-      iCloud|Knowledge|Network|VirtualMachines|DiskImages) continue ;;
+      iCloud|Knowledge|Network|VirtualMachines|DiskImages|\
+      Google|Firefox|BraveSoftware|"Microsoft Edge"|com.operasoftware.Opera|Arc) continue ;;
     esac
     s=$(get_size_bytes "$item") 2>/dev/null || s=0
     [ "$s" -le 0 ] && continue
