@@ -119,3 +119,15 @@ def test_new_system_categories_present(tmp_path):
     for cid in ["diagnostic_reports", "quicklook_cache",
                 "saved_app_state", "other_trash"]:
         assert cid in data["scan"], cid
+
+
+def test_thin_snapshots_json_shape(tmp_path):
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_DRYRUN="1")
+    out = subprocess.run(
+        ["bash", str(SCRIPT), "--thin-snapshots-json"],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    data = json.loads(out.stdout)
+    assert "success" in data
+    assert "snapshots_before" in data

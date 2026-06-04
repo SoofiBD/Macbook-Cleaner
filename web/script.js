@@ -149,6 +149,7 @@
     btnFlushDns:    $('#btnFlushDns'),
     btnPurgeRam:    $('#btnPurgeRam'),
     btnLaunchAgents: $('#btnLaunchAgents'),
+    btnThinSnapshots: $('#btnThinSnapshots'),
     categoryCount: $('#categoryCount'),
     catList:       $('#catList'),
   };
@@ -473,6 +474,10 @@
 
     if (url === '/api/launchagents-clean') {
       return { success: true, removed: 3, errors: 0 };
+    }
+
+    if (url === '/api/thin-snapshots') {
+      return { success: true, snapshots_before: 2, snapshots_after: 0, note: 'ok', disk_free: '184 GB' };
     }
 
     return { success: true };
@@ -848,6 +853,21 @@
     }
   }
 
+  async function handleThinSnapshots() {
+    if (el.btnThinSnapshots.disabled) return;
+    setLoading(el.btnThinSnapshots, true);
+    termLog('Yerel snapshotlar inceltiliyor…', 'info');
+    try {
+      const data = await apiFetch('/api/thin-snapshots', { method: 'POST', body: '{}' });
+      termLog(`Snapshot: ${data.snapshots_before} → ${data.snapshots_after} · Boş alan ${data.disk_free || '—'}`, 'success');
+      if (data.disk_free) el.sysDiskFree.textContent = data.disk_free;
+    } catch (err) {
+      termLog(`Snapshot hatası: ${err.message}`, 'error');
+    } finally {
+      setLoading(el.btnThinSnapshots, false);
+    }
+  }
+
   /* ──────────────────────────────────────────────────────────
      Bindings
      ────────────────────────────────────────────────────────── */
@@ -857,6 +877,7 @@
   if (el.btnFlushDns) el.btnFlushDns.addEventListener('click', handleFlushDns);
   if (el.btnPurgeRam) el.btnPurgeRam.addEventListener('click', handlePurgeRam);
   if (el.btnLaunchAgents) el.btnLaunchAgents.addEventListener('click', handleLaunchAgents);
+  if (el.btnThinSnapshots) el.btnThinSnapshots.addEventListener('click', handleThinSnapshots);
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {

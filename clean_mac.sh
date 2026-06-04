@@ -1424,6 +1424,24 @@ do_clean_launchagents() {
   printf '{"success":true,"removed":%d,"errors":%d}\n' "$removed" "${#errors[@]}"
 }
 
+do_thin_snapshots_json() {
+  JSON_MODE=true
+  local before after note="ok"
+  before=$(tmutil listlocalsnapshots / 2>/dev/null | grep -c "com.apple.TimeMachine" || true)
+  [ -z "$before" ] && before=0
+  if [ "${APPLE_CLEANUP_DRYRUN:-0}" = "1" ]; then
+    note="dryrun"
+    after=$before
+  else
+    # 10GB hedef, urgency 4 (agresif). Yetki/snapshot yoksa sessiz başarısız.
+    tmutil thinLocalSnapshots / 10000000000 4 >/dev/null 2>&1 || note="yetki_yok_veya_snapshot_yok"
+    after=$(tmutil listlocalsnapshots / 2>/dev/null | grep -c "com.apple.TimeMachine" || true)
+    [ -z "$after" ] && after=0
+  fi
+  printf '{"success":true,"snapshots_before":%s,"snapshots_after":%s,"note":"%s","disk_free":"%s"}\n' \
+    "$before" "$after" "$note" "$(get_free_disk)"
+}
+
 get_app_bundle_id() {
   local app_path="$1"
   local plist="$app_path/Contents/Info.plist"
@@ -1712,6 +1730,10 @@ main() {
         do_clean_launchagents
         exit 0
         ;;
+      --thin-snapshots-json)
+        do_thin_snapshots_json
+        exit 0
+        ;;
       --help|-h)
         echo ""
         echo -e "${BOLD}clean_mac v${VERSION}${NC} — macOS Sistem Temizleyici (Güvenli Sürüm)"
@@ -1736,6 +1758,7 @@ main() {
         echo "  --browser-full-sub 'c,s' Sıfırlanacak tarayıcı kodları (chrome, safari...)"
         echo "  --developer-sub 'd,b'    Xcode DerivedData (derived_data) veya Kırık Symlinkler (broken_links)"
         echo "  --status-json            Sistem bilgisini JSON döner"
+        echo "  --thin-snapshots-json    Yerel snapshot'ları inceltir, JSON döner"
         echo ""
         echo "Not: Downloads klasörüne dokunulmaz."
         echo ""
