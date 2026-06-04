@@ -66,3 +66,18 @@ def test_app_leftovers_excludes_browser_dirs(tmp_path):
     leftovers = data["scan"]["app_leftovers"]["size_bytes"]
     # Yalnızca SomeApp (~1MB) sayılmalı, Google (~4MB) değil
     assert leftovers < 3 * 1024 * 1024, leftovers
+
+
+def test_hardlinks_not_double_counted(tmp_path):
+    import os as _os
+    logs = tmp_path / "Library/Logs"
+    logs.mkdir(parents=True)
+    (logs / "a").mkdir()
+    (logs / "b").mkdir()
+    big = logs / "a" / "big.bin"
+    big.write_bytes(b"y" * (5 * 1024 * 1024))  # 5MB
+    _os.link(big, logs / "b" / "big_link.bin")  # aynı inode, kardeş dizinde
+    data = run_scan(tmp_path)
+    logs_size = data["scan"]["logs"]["size_bytes"]
+    # Hardlink tek sayılmalı → ~5MB, 10MB değil
+    assert logs_size < 8 * 1024 * 1024, logs_size

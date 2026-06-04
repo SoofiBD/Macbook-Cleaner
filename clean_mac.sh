@@ -139,13 +139,16 @@ get_size_bytes() {
 get_dir_size_bytes() {
   local path="$1"
   [ -d "$path" ] || { echo "0"; return; }
-  local total=0
-  local item
-  while IFS= read -r -d '' item; do
-    local s=0
-    s=$(du -sk "$item" 2>/dev/null | awk '{print $1 * 1024}') || s=0
-    total=$((total + s))
-  done < <(find "$path" -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
+  # Boş dizin: du'yu hiç çağırma (macOS xargs'ta -r yok).
+  local first
+  first=$(find "$path" -maxdepth 1 -mindepth 1 -print -quit 2>/dev/null)
+  [ -z "$first" ] && { echo "0"; return; }
+  # Tek du çağrısı: hardlink'ler çağrı içinde tekilleşir.
+  local total
+  total=$(find "$path" -maxdepth 1 -mindepth 1 -print0 2>/dev/null \
+            | xargs -0 du -sck 2>/dev/null \
+            | awk 'END {print $1 * 1024}')
+  [ -z "$total" ] && total=0
   echo "$total"
 }
 
