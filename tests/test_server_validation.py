@@ -48,6 +48,12 @@ class TestValidateDeveloperItem(unittest.TestCase):
         self.assertFalse(self.v("../../etc"))
         self.assertFalse(self.v("; rm -rf /"))
 
+    def test_new_developer_keys_allowed(self):
+        for k in ["device_support", "coresim_caches", "xcode_archives",
+                  "simctl_unavailable", "pnpm_cache", "yarn_cache",
+                  "cocoapods_cache", "gradle_cache", "maven_repo"]:
+            self.assertTrue(self.v(k), k)
+
 
 class TestValidateBrowserKey(unittest.TestCase):
     def setUp(self):

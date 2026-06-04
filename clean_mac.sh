@@ -945,6 +945,28 @@ clean_developer() {
       elif [ "$item" = "pip_cache" ]; then
         local pip_cache="$HOME/Library/Caches/pip"
         [ -d "$pip_cache" ] && safe_rm_contents "$pip_cache" "pip Cache"
+      elif [ "$item" = "device_support" ]; then
+        safe_rm_contents "$HOME/Library/Developer/Xcode/iOS DeviceSupport" "iOS DeviceSupport"
+      elif [ "$item" = "coresim_caches" ]; then
+        safe_rm_contents "$HOME/Library/Developer/CoreSimulator/Caches" "CoreSimulator Caches"
+      elif [ "$item" = "xcode_archives" ]; then
+        safe_rm_contents "$HOME/Library/Developer/Xcode/Archives" "Xcode Archives"
+      elif [ "$item" = "cocoapods_cache" ]; then
+        safe_rm_contents "$HOME/Library/Caches/CocoaPods" "CocoaPods Cache"
+      elif [ "$item" = "pnpm_cache" ]; then
+        safe_rm_contents "$HOME/Library/pnpm" "pnpm Store"
+      elif [ "$item" = "yarn_cache" ]; then
+        safe_rm_contents "$HOME/Library/Caches/Yarn" "Yarn Cache"
+      elif [ "$item" = "gradle_cache" ]; then
+        safe_rm_contents "$HOME/.gradle/caches" "Gradle Cache"
+      elif [ "$item" = "maven_repo" ]; then
+        safe_rm_contents "$HOME/.m2/repository" "Maven Repository"
+      elif [ "$item" = "simctl_unavailable" ]; then
+        if command -v xcrun &>/dev/null; then
+          xcrun simctl delete unavailable >/dev/null 2>&1 \
+            && success "Erişilmez simülatörler silindi" \
+            || warn "simctl çalıştırılamadı"
+        fi
       fi
     done
     return
@@ -1124,6 +1146,18 @@ scan_app_leftovers_subitems_json() {
   done < <(find "$HOME/Library/Application Support" -maxdepth 1 -mindepth 1 -type d -print0 2>/dev/null | sort -z)
 }
 
+# id, görünen ad, yol, risk → JSON alt-öğe satırı (LEADING virgüllü; yol yoksa hiçbir şey yazma)
+emit_dev_subitem() {
+  local id="$1" name="$2" path="$3" risk="$4"
+  [ -e "$path" ] || return 0
+  local s; s=$(get_size_bytes "$path") || s=0
+  [ "$s" -le 0 ] 2>/dev/null && return 0
+  local sz_h; sz_h=$(format_bytes "$s")
+  local esc_name; esc_name=$(json_escape_str "$name")
+  local esc_path; esc_path=$(json_escape_str "$path")
+  echo "        ,{\"id\": \"$id\", \"name\": \"$esc_name\", \"path\": \"$esc_path\", \"size_bytes\": $s, \"size_human\": \"$sz_h\", \"risk\": \"$risk\", \"is_orphaned\": true}"
+}
+
 scan_developer_subitems_json() {
   local deriveddata="$HOME/Library/Developer/Xcode/DerivedData"
   local s_derived=0
@@ -1189,6 +1223,23 @@ scan_developer_subitems_json() {
   local sz_pip; sz_pip=$(format_bytes "$s_pip")
   local esc_pip_path; esc_pip_path=$(json_escape_str "$pip_cache_path")
   echo "        ,{\"id\": \"pip_cache\", \"name\": \"pip Cache\", \"path\": \"$esc_pip_path\", \"size_bytes\": $s_pip, \"size_human\": \"$sz_pip\", \"is_orphaned\": false}"
+
+  emit_dev_subitem "device_support" "iOS DeviceSupport" \
+    "$HOME/Library/Developer/Xcode/iOS DeviceSupport" "safe"
+  emit_dev_subitem "coresim_caches" "CoreSimulator Caches" \
+    "$HOME/Library/Developer/CoreSimulator/Caches" "safe"
+  emit_dev_subitem "xcode_archives" "Xcode Archives" \
+    "$HOME/Library/Developer/Xcode/Archives" "caution"
+  emit_dev_subitem "cocoapods_cache" "CocoaPods Cache" \
+    "$HOME/Library/Caches/CocoaPods" "safe"
+  emit_dev_subitem "pnpm_cache" "pnpm Store" \
+    "$HOME/Library/pnpm" "safe"
+  emit_dev_subitem "yarn_cache" "Yarn Cache" \
+    "$HOME/Library/Caches/Yarn" "safe"
+  emit_dev_subitem "gradle_cache" "Gradle Cache" \
+    "$HOME/.gradle/caches" "caution"
+  emit_dev_subitem "maven_repo" "Maven Repository" \
+    "$HOME/.m2/repository" "caution"
 }
 
 scan_browser_full_subitems_json() {

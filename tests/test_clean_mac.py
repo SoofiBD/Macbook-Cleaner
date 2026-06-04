@@ -100,3 +100,15 @@ def test_clean_json_reports_real_and_estimated(tmp_path):
     assert "estimated_bytes" in data   # du tahmini
     assert "freed_source" in data      # "df" veya "estimated"
     assert data["freed_bytes"] >= 0    # negatif kıstırılmış
+
+
+def test_developer_subitems_include_new_caches(tmp_path):
+    # Gradle cache fixture → developer subitems içinde gradle_cache görünmeli
+    make_dir_with_bytes(tmp_path / ".gradle/caches/modules", kb=2048)
+    data = run_scan(tmp_path)
+    subs = data["scan"]["developer"].get("subitems", [])
+    ids = {s["id"] for s in subs}
+    assert "gradle_cache" in ids, ids
+    g = next(s for s in subs if s["id"] == "gradle_cache")
+    assert g["risk"] == "caution"
+    assert g["size_bytes"] > 0

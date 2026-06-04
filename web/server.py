@@ -33,6 +33,9 @@ _APP_NAME_RE     = re.compile(r'^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$')
 _DEVELOPER_WHITELIST = frozenset({
     "derived_data", "broken_links",
     "brew_cache", "docker_prune", "npm_cache", "pip_cache",
+    "device_support", "coresim_caches", "xcode_archives",
+    "simctl_unavailable", "pnpm_cache", "yarn_cache",
+    "cocoapods_cache", "gradle_cache", "maven_repo",
 })
 _BROWSER_WHITELIST = frozenset({
     "safari", "cookies", "chrome", "firefox",
