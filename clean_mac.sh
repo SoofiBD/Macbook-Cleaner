@@ -144,6 +144,9 @@ get_dir_size_bytes() {
   first=$(find "$path" -maxdepth 1 -mindepth 1 -print -quit 2>/dev/null)
   [ -z "$first" ] && { echo "0"; return; }
   # Tek du çağrısı: hardlink'ler çağrı içinde tekilleşir.
+  # NOT: ~17k+ doğrudan çocuk olan dizinlerde xargs ARG_MAX'te bölünebilir ve
+  # awk END yalnız son batch'in 'total'ını alıp eksik sayabilir. Gerçek kazanç
+  # df farkından ölçüldüğü için bu yalnızca tahmini etkiler (kabul edilebilir).
   local total
   total=$(find "$path" -maxdepth 1 -mindepth 1 -print0 2>/dev/null \
             | xargs -0 du -sck 2>/dev/null \
