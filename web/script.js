@@ -721,7 +721,7 @@
 
     const dangerSelected = selected
       .map((idx) => KEY_BY_INDEX[idx])
-      .filter((key) => scanData?.scan?.[key]?.risk === 'danger');
+      .filter((key) => scanData?.scan?.[key]?.risk === 'danger' || CAT_BY_KEY[key]?.danger === true);
     if (dangerSelected.length > 0) {
       const dnames = dangerSelected.map((k) => CAT_BY_KEY[k]?.name || k).join(', ');
       const dangerOk = confirm(
