@@ -151,7 +151,7 @@
     /* Animate a freshly inserted list (apps list) in with a stagger. */
     revealList(container) {
       if (reduce || !container) return;
-      g.from(container.children, { y: 14, opacity: 0, duration: 0.4, stagger: 0.03, overwrite: true });
+      g.from(container.children, { y: 14, duration: 0.4, stagger: 0.03, overwrite: true });
     },
 
     /* Make the terminal drawer and results panel draggable (throw with inertia),

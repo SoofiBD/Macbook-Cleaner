@@ -1381,7 +1381,9 @@
       });
     });
 
-    if (!skipReveal) window.AppAnim?.revealList?.(appsList);
+    if (!skipReveal) {
+      window.AppAnim?.revealList?.(appsList);
+    }
   }
 
   function getColorForString(str) {
