@@ -192,6 +192,12 @@ a { color: inherit; text-decoration: none; }
   gap: 24px;
 }
 
+/* Frosted glass — applied to every top-level panel */
+.topbar, .nav-tabs, .hero, .cat-list, .results, .term, .uninstaller-container {
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+  backdrop-filter: blur(var(--glass-blur)) saturate(180%);
+}
+
 /* ═══════════════════════════════════════════════════════════
    TOP BAR
    ═══════════════════════════════════════════════════════════ */
@@ -201,10 +207,10 @@ a { color: inherit; text-decoration: none; }
   align-items: center;
   gap: 24px;
   padding: 14px 18px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  box-shadow: var(--shadow-sm);
+  background: var(--glass);
+  border: 1px solid var(--glass-bd);
+  border-radius: 18px;
+  box-shadow: var(--glass-shadow);
 }
 
 .brand { display: flex; align-items: center; gap: 12px; }
@@ -227,8 +233,8 @@ a { color: inherit; text-decoration: none; }
   display: inline-flex; align-items: center; gap: 8px;
   height: 32px;
   padding: 0 12px;
-  background: var(--surface-2);
-  border: 1px solid var(--hairline);
+  background: var(--chip);
+  border: 1px solid var(--hair);
   border-radius: var(--r-pill);
   font-size: 12.5px;
 }
@@ -252,21 +258,21 @@ a { color: inherit; text-decoration: none; }
 }
 .sys-disk-fill {
   display: block; height: 100%; width: 0%;
-  background: linear-gradient(90deg, var(--success), var(--accent));
+  background: linear-gradient(90deg, var(--accent-2), var(--accent));
   border-radius: 3px;
   transition: width var(--d3) var(--ease);
 }
 
 .theme-toggle {
-  width: 36px; height: 36px;
+  width: 38px; height: 38px;
   display: grid; place-items: center;
-  background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  background: var(--chip);
+  border: 1px solid var(--glass-bd);
+  border-radius: 11px;
   color: var(--text-2);
   transition: background var(--d1) var(--ease), color var(--d1) var(--ease), transform var(--d1) var(--ease);
 }
-.theme-toggle:hover { background: var(--surface-3); color: var(--text); }
+.theme-toggle:hover { background: color-mix(in srgb, var(--accent) 12%, var(--chip)); color: var(--accent); }
 .theme-toggle:active { transform: scale(.94); }
 .theme-toggle .ic-sun { display: none; }
 .theme-toggle .ic-moon { display: block; }
@@ -1009,12 +1015,12 @@ a { color: inherit; text-decoration: none; }
 /* ── Tab Navigation ─────────────────────────────────────── */
 .nav-tabs {
   display: flex;
-  gap: 8px;
-  padding: 6px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  box-shadow: var(--shadow-sm);
+  gap: 4px;
+  padding: 5px;
+  background: var(--glass);
+  border: 1px solid var(--glass-bd);
+  border-radius: 14px;
+  box-shadow: var(--glass-shadow);
   z-index: 10;
 }
 
@@ -1028,19 +1034,18 @@ a { color: inherit; text-decoration: none; }
   font-size: 13.5px;
   font-weight: 600;
   color: var(--text-2);
-  border-radius: var(--r-sm);
+  border-radius: 10px;
   transition: all var(--d1) var(--ease);
 }
 
 .tab-btn:hover {
-  background: var(--surface-2);
+  background: var(--hair);
   color: var(--text);
 }
 
 .tab-btn.active {
-  background: var(--accent);
-  color: var(--text-on-acc);
-  box-shadow: 0 4px 10px var(--accent-ring);
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
 }
 
 .tab-btn .ic {
