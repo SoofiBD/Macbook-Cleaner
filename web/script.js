@@ -406,7 +406,7 @@
         // Not enough history yet — keep collecting, stay quiet in the UI.
         el.forecastChip.hidden = true;
       } else {
-        el.sysForecast.textContent = 'Sabit — risk yok';
+        el.sysForecast.textContent = 'Stable — no risk';
         el.forecastChip.hidden = false;
       }
     } catch (err) {
@@ -600,7 +600,7 @@
   };
 
   // Age-based suggestion for a cache sub-item, based on how long since it was
-  // last touched and how big it is. Mirrors ClearDisk's heuristic, in Turkish.
+  // last touched and how big it is. Mirrors ClearDisk's heuristic.
   function suggestionFor(sub) {
     const days = sub.age_days;
     if (days == null) return '';
@@ -649,7 +649,7 @@
         const cls = sub.is_orphaned ? 'orphaned' : 'installed';
         const typeLabel = sub.type || 'project';
         const ageLabel = sub.is_orphaned && sub.days_since != null
-          ? ` · ${sub.days_since}g` : '';
+          ? ` · ${sub.days_since}d` : '';
         badge = `<span class="subitem-badge ${cls}">${escapeHtml(typeLabel)}${ageLabel}</span>`;
       }
 
