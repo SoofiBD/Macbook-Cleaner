@@ -845,11 +845,11 @@ a { color: inherit; text-decoration: none; }
    TERMINAL
    ═══════════════════════════════════════════════════════════ */
 .term {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
+  background: var(--glass);
+  border: 1px solid var(--glass-bd);
+  border-radius: 18px;
   overflow: hidden;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--glass-shadow);
 }
 .term-head {
   width: 100%;
@@ -859,7 +859,7 @@ a { color: inherit; text-decoration: none; }
   color: var(--text-2);
   transition: background var(--d1) var(--ease);
 }
-.term-head:hover { background: var(--surface-2); }
+.term-head:hover { background: var(--hair); }
 .term-headleft, .term-headright { display: flex; align-items: center; gap: 10px; }
 .term-title { font-weight: 600; color: var(--text); font-family: var(--font-mono); font-size: 12.5px; letter-spacing: .02em; }
 .term-hint { font-size: 12px; color: var(--text-3); }
@@ -871,7 +871,7 @@ a { color: inherit; text-decoration: none; }
   font-size: 11px;
   font-weight: 600;
   padding: 1px 7px;
-  background: var(--surface-3);
+  background: var(--chip);
   color: var(--text-2);
   border-radius: 999px;
   min-width: 22px;
@@ -1091,9 +1091,9 @@ a { color: inherit; text-decoration: none; }
   height: 32px;
   padding: 0 12px 0 32px;
   font-size: 13px;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
+  background: var(--chip);
+  border: 1px solid var(--glass-bd);
+  border-radius: 10px;
   color: var(--text);
   outline: none;
   transition: all var(--d1) var(--ease);
@@ -1106,11 +1106,11 @@ a { color: inherit; text-decoration: none; }
 
 /* ── App Uninstaller ────────────────────────────────────── */
 .uninstaller-container {
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
+  background: var(--glass);
+  border: 1px solid var(--glass-bd);
+  border-radius: 20px;
   overflow: hidden;
-  box-shadow: var(--shadow-sm);
+  box-shadow: var(--glass-shadow);
 }
 
 .apps-list {
@@ -1153,7 +1153,7 @@ a { color: inherit; text-decoration: none; }
 }
 
 .app-item:hover {
-  background: var(--surface-2);
+  background: var(--hair);
 }
 
 .app-info-col {
@@ -1294,9 +1294,9 @@ a { color: inherit; text-decoration: none; }
 .files-toolbar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 .files-sort {
   padding: .5rem .6rem;
-  border: 1px solid var(--border);
+  border: 1px solid var(--glass-bd);
   border-radius: 10px;
-  background: var(--surface-2);
+  background: var(--chip);
   color: var(--text);
   font: inherit;
 }
@@ -1310,7 +1310,7 @@ a { color: inherit; text-decoration: none; }
   border-radius: 10px;
   transition: background-color var(--d1) var(--ease);
 }
-.file-row:hover { background: var(--surface-2); }
+.file-row:hover { background: var(--hair); }
 .file-main { display: flex; flex-direction: column; min-width: 0; }
 .file-name { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .file-path { font-size: .78rem; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -1321,8 +1321,11 @@ a { color: inherit; text-decoration: none; }
 .file-badge.safety-safe    { background: rgba(28, 122, 61, .14); color: #1c7a3d; }
 .files-footer {
   display: flex; justify-content: space-between; align-items: center;
-  gap: 1rem; margin-top: 1rem; padding-top: 1rem;
-  border-top: 1px solid var(--border);
+  gap: 1rem; margin-top: 1rem; padding: 14px 16px;
+  background: var(--glass);
+  border: 1px solid var(--glass-bd);
+  border-radius: 16px;
+  box-shadow: var(--glass-shadow);
 }
 .files-total-label { color: var(--text-2); }
 .files-total-label b { color: var(--text); font-variant-numeric: tabular-nums; }
