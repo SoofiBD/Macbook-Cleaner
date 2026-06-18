@@ -195,6 +195,7 @@
     const next = cur === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
     localStorage.setItem('ac-theme', next);
+    window.AppAnim?.themeSwitch?.();
     termLog(`Tema değiştirildi: ${next === 'dark' ? 'koyu' : 'açık'}`, 'info');
   }
 
@@ -414,6 +415,9 @@
   }
 
   function animateDonut(pct) {
+    // Prefer the GSAP sweep when GSAP is actually loaded; otherwise fall back
+    // to the plain attribute set + numeric tween so the donut still renders.
+    if (window.gsap && window.AppAnim?.donut?.(pct)) return;
     el.donutFill.setAttribute('stroke-dasharray', `${pct} ${100 - pct}`);
     tween(0, pct, 900, (v) => {
       el.donutNum.textContent = Math.round(v) + '%';
@@ -1012,6 +1016,7 @@
 
   // GSAP entrance + scroll reveals + draggable panels (no-ops without GSAP).
   window.AppAnim?.intro?.();
+  window.AppAnim?.blobs?.();
   window.AppAnim?.revealCards?.();
   window.AppAnim?.setupDraggable?.();
 
