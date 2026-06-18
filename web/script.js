@@ -184,7 +184,7 @@
   };
 
   function initTheme() {
-    const t = localStorage.getItem('ac-theme') || 'light';
+    const t = localStorage.getItem('ac-theme') || 'dark';
     document.documentElement.setAttribute('data-theme', t);
     const p = localStorage.getItem('ac-palette') || 'blue';
     applyPalette(p);
