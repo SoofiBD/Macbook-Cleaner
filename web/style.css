@@ -1222,3 +1222,44 @@ a { color: inherit; text-decoration: none; }
   }
 }
 
+/* ── Cleanable Files (Dosyalar) tab ──────────────────────────── */
+.files-toolbar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
+.files-sort {
+  padding: .5rem .6rem;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--text);
+  font: inherit;
+}
+.files-list { list-style: none; margin: 1rem 0 0; padding: 0; display: flex; flex-direction: column; gap: 2px; }
+.file-row {
+  display: grid;
+  grid-template-columns: auto 1fr auto auto;
+  align-items: center;
+  gap: .75rem;
+  padding: .6rem .75rem;
+  border-radius: 10px;
+  transition: background-color var(--d1) var(--ease);
+}
+.file-row:hover { background: var(--surface-2); }
+.file-main { display: flex; flex-direction: column; min-width: 0; }
+.file-name { font-weight: 600; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-path { font-size: .78rem; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-size { font-variant-numeric: tabular-nums; font-weight: 600; color: var(--text); }
+.file-badge { font-size: .72rem; padding: .12rem .5rem; border-radius: 999px; white-space: nowrap; }
+.file-badge.safety-danger  { background: rgba(220, 38, 38, .14); color: #dc2626; }
+.file-badge.safety-caution { background: rgba(154, 103, 0, .14); color: #9a6700; }
+.file-badge.safety-safe    { background: rgba(28, 122, 61, .14); color: #1c7a3d; }
+.files-footer {
+  display: flex; justify-content: space-between; align-items: center;
+  gap: 1rem; margin-top: 1rem; padding-top: 1rem;
+  border-top: 1px solid var(--border);
+}
+.files-total-label { color: var(--text-2); }
+.files-total-label b { color: var(--text); font-variant-numeric: tabular-nums; }
+.files-empty { padding: 2rem; text-align: center; color: var(--text-3); }
+@media (prefers-reduced-motion: reduce) {
+  .file-row { transition: none; }
+}
+

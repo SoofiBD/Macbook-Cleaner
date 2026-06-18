@@ -174,6 +174,10 @@
         <svg class="ic"><use href="#i-uninstall"/></svg>
         <span>Uygulama Kaldırıcı</span>
       </button>
+      <button class="tab-btn" role="tab" aria-selected="false" aria-controls="filesTabContent" id="tab-files" type="button">
+        <svg class="ic"><use href="#i-leftover"/></svg>
+        <span>Dosyalar</span>
+      </button>
     </nav>
 
     <!-- ═══ Cleanup Tab Content ═══ -->
@@ -368,6 +372,45 @@
           <ul class="apps-list" id="appsList" role="list">
             <!-- Dynamically populated -->
           </ul>
+        </div>
+      </section>
+    </div>
+
+    <!-- ═══ Cleanable Files Tab Content ═══ -->
+    <div id="filesTabContent" hidden>
+      <section class="section">
+        <div class="section-head">
+          <div class="section-titleblock">
+            <h2 class="section-title">Temizlenebilir Dosyalar</h2>
+            <span class="section-sub" id="filesCount">Önce tarama yapın</span>
+          </div>
+          <div class="section-tools files-toolbar">
+            <div class="search-box">
+              <svg class="ic"><use href="#i-search"/></svg>
+              <input type="search" id="filesSearch" placeholder="Dosya veya yol ara…" aria-label="Dosya ara" autocomplete="off" />
+            </div>
+            <select id="filesSort" class="files-sort" aria-label="Sıralama">
+              <option value="size:desc">Boyut (büyük → küçük)</option>
+              <option value="size:asc">Boyut (küçük → büyük)</option>
+              <option value="age:desc">Yaş (eski → yeni)</option>
+              <option value="name:asc">Ad (A → Z)</option>
+            </select>
+            <button class="btn btn-sm" id="filesSelectAll" type="button">Tümünü Seç</button>
+            <button class="btn btn-sm" id="filesSelectNone" type="button">Seçimi Kaldır</button>
+          </div>
+        </div>
+
+        <ul id="filesList" class="files-list" role="list" aria-live="polite">
+          <!-- Dynamically populated -->
+        </ul>
+        <div id="filesEmpty" class="files-empty" hidden>Henüz tarama yapılmadı. "Tara" düğmesine basın.</div>
+
+        <div class="files-footer">
+          <span class="files-total-label">Seçilen: <b id="filesSelectedTotal">0 B</b></span>
+          <button class="btn btn-accent" id="btnCleanSelected" type="button" disabled>
+            <span class="spinner" aria-hidden="true"></span>
+            <span class="btn-text">Seçilenleri Temizle</span>
+          </button>
         </div>
       </section>
     </div>
