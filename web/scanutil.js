@@ -21,5 +21,98 @@
     );
   }
 
-  return { FILELIST_CATEGORIES, computeTotalBytes };
+  const SAFETY_BY_RISK = { danger: 'danger', caution: 'caution' };
+
+  function flattenScan(data) {
+    const scan = (data && data.scan) || {};
+    const rows = [];
+    for (const catKey of FILELIST_CATEGORIES) {
+      const info = scan[catKey];
+      if (!info || !Array.isArray(info.subitems)) continue;
+      const safety = SAFETY_BY_RISK[info.risk] || 'safe';
+      for (const sub of info.subitems) {
+        rows.push({
+          rowId: catKey + '::' + sub.id,
+          catKey,
+          catName: catKey,
+          id: sub.id,
+          name: sub.name || sub.id,
+          sizeBytes: Number.isFinite(sub.size_bytes) ? sub.size_bytes : null,
+          sizeHuman: sub.size_human || '',
+          ageDays: Number.isFinite(sub.age_days) ? sub.age_days
+                   : (Number.isFinite(sub.days_since) ? sub.days_since : null),
+          path: sub.path || '',
+          risk: info.risk || '',
+          isOrphaned: !!sub.is_orphaned,
+          safety,
+        });
+      }
+    }
+    return rows;
+  }
+
+  function sortRows(rows, key, dir) {
+    const mult = dir === 'asc' ? 1 : -1;
+    const pick = {
+      size: (r) => r.sizeBytes,
+      age:  (r) => r.ageDays,
+      name: (r) => (r.name || '').toLowerCase(),
+    }[key] || ((r) => r.sizeBytes);
+    return rows
+      .map((r, i) => [r, i])
+      .sort(([a, ai], [b, bi]) => {
+        const va = pick(a), vb = pick(b);
+        const na = va == null, nb = vb == null;
+        if (na && nb) return ai - bi;       // stable
+        if (na) return 1;                    // nulls last regardless of dir
+        if (nb) return -1;
+        if (va < vb) return -1 * mult;
+        if (va > vb) return 1 * mult;
+        return ai - bi;                      // stable tiebreak
+      })
+      .map(([r]) => r);
+  }
+
+  function filterRows(rows, query) {
+    const q = (query || '').trim().toLowerCase();
+    if (!q) return rows.slice();
+    return rows.filter((r) =>
+      (r.name || '').toLowerCase().includes(q) ||
+      (r.catName || '').toLowerCase().includes(q) ||
+      (r.path || '').toLowerCase().includes(q)
+    );
+  }
+
+  function selectedTotalBytes(rows, selectedRowIds) {
+    const set = selectedRowIds instanceof Set ? selectedRowIds : new Set(selectedRowIds);
+    return rows.reduce(
+      (sum, r) => sum + (set.has(r.rowId) ? (r.sizeBytes || 0) : 0), 0);
+  }
+
+  function buildCleanPayload(selectedRows, indexByKey) {
+    const payload = {
+      categories: [],
+      app_leftovers_selected: [],
+      browser_full_selected: [],
+      developer_selected: [],
+      ios_backups_selected: [],
+      app_uninstaller_selected: [],
+      project_artifacts_selected: [],
+      mail_downloads_selected: [],
+    };
+    const idxSet = new Set();
+    for (const r of selectedRows) {
+      const bucket = r.catKey + '_selected';
+      if (Array.isArray(payload[bucket])) payload[bucket].push(r.id);
+      const idx = indexByKey[r.catKey];
+      if (idx != null) idxSet.add(idx);
+    }
+    payload.categories = Array.from(idxSet);
+    return payload;
+  }
+
+  return {
+    FILELIST_CATEGORIES, computeTotalBytes,
+    flattenScan, sortRows, filterRows, selectedTotalBytes, buildCleanPayload,
+  };
 });
