@@ -399,6 +399,9 @@ a { color: inherit; text-decoration: none; }
   transition: stroke-dasharray 900ms var(--ease);
   filter: drop-shadow(0 0 8px var(--accent-ring));
 }
+/* Resolve gradient stops via CSS (reliable var() resolution across engines) */
+#donutGrad stop:first-child { stop-color: var(--accent-2); }
+#donutGrad stop:last-child  { stop-color: var(--accent); }
 .donut-num {
   font-family: var(--font-sans);
   font-size: 30px;
@@ -461,11 +464,11 @@ a { color: inherit; text-decoration: none; }
 .btn-accent:disabled:hover { filter: none; background: var(--chip); }
 
 .btn-ghost {
-  background: transparent;
-  color: var(--text-2);
-  border-color: var(--border);
+  background: var(--chip);
+  color: var(--text);
+  border: 1px solid var(--glass-bd);
 }
-.btn-ghost:hover { color: var(--text); background: var(--surface-2); }
+.btn-ghost:hover { color: var(--text); background: color-mix(in srgb, var(--accent) 10%, var(--chip)); border-color: color-mix(in srgb, var(--accent) 25%, transparent); }
 
 .btn-sm { height: 32px; padding: 0 12px; font-size: 13px; border-radius: 8px; }
 
@@ -500,12 +503,12 @@ a { color: inherit; text-decoration: none; }
   height: 30px; padding: 0 12px;
   font-size: 12.5px; font-weight: 500;
   color: var(--text-2);
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-pill);
+  background: var(--chip);
+  border: 1px solid var(--glass-bd);
+  border-radius: 9px;
   transition: all var(--d1) var(--ease);
 }
-.chip-btn:hover { color: var(--text); background: var(--surface-2); border-color: var(--border-2); }
+.chip-btn:hover { color: var(--accent); background: var(--chip); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
 .chip-btn .ic { width: 14px; height: 14px; }
 
 .icon-btn {
@@ -545,17 +548,16 @@ a { color: inherit; text-decoration: none; }
    CATEGORY LIST
    ═══════════════════════════════════════════════════════════ */
 .cat-list {
-  display: flex; flex-direction: column;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  overflow: hidden;
-  box-shadow: var(--shadow-sm);
+  display: flex; flex-direction: column; gap: 1px;
+  background: var(--glass);
+  border: 1px solid var(--glass-bd);
+  border-radius: 20px;
+  padding: 7px;
+  box-shadow: var(--glass-shadow);
 }
-.cat-list-tight .cat-row { padding: 14px 20px; }
+.cat-list-tight .cat-row { padding: 14px 16px; }
 
 .cat { position: relative; }
-.cat + .cat { border-top: 1px solid var(--hairline); }
 
 .cat-row {
   width: 100%;
@@ -563,33 +565,41 @@ a { color: inherit; text-decoration: none; }
   grid-template-columns: 40px 1fr 140px 84px 44px 18px;
   align-items: center;
   gap: 16px;
-  padding: 16px 20px;
+  padding: 14px 16px;
   text-align: left;
   background: transparent;
+  border-radius: 13px;
   transition: background var(--d1) var(--ease);
 }
-.cat-row:hover { background: var(--surface-2); }
+.cat-row:hover { background: var(--hair); }
+.cat.selected .cat-row { background: color-mix(in srgb, var(--accent) 9%, transparent); }
 .cat-row-static { cursor: default; }
 .cat-row-static:hover { background: transparent; }
 
 .cat-ic {
-  width: 40px; height: 40px;
+  width: 38px; height: 38px;
   display: grid; place-items: center;
-  border-radius: 10px;
-  background: var(--surface-2);
-  color: var(--text-2);
-  border: 1px solid var(--hairline);
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--accent);
+  border: 1px solid transparent;
   transition: background var(--d1) var(--ease), color var(--d1) var(--ease), border-color var(--d1) var(--ease);
 }
 .cat.selected .cat-ic {
-  background: var(--accent-soft);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
   color: var(--accent);
-  border-color: color-mix(in oklch, var(--accent) 30%, transparent);
+  border-color: color-mix(in srgb, var(--accent) 30%, transparent);
 }
 .cat-danger.selected .cat-ic {
   background: var(--danger-soft);
   color: var(--danger);
   border-color: color-mix(in oklch, var(--danger) 30%, transparent);
+}
+/* Maintenance rows use neutral (non-accent) icon tiles */
+.cat-maint .cat-ic {
+  background: var(--chip);
+  color: var(--text-2);
+  border-color: transparent;
 }
 
 .cat-meta { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
@@ -769,11 +779,11 @@ a { color: inherit; text-decoration: none; }
    RESULTS PANEL
    ═══════════════════════════════════════════════════════════ */
 .results {
-  background: var(--surface);
-  border: 1px solid color-mix(in oklch, var(--success) 30%, var(--border));
+  background: color-mix(in srgb, var(--accent) 12%, var(--glass));
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, transparent);
   border-radius: var(--r-xl);
   padding: 24px 28px;
-  box-shadow: 0 12px 32px -10px var(--success-soft), var(--shadow-sm);
+  box-shadow: var(--glass-shadow);
   animation: fadeUp var(--d3) var(--ease);
   position: relative;
   overflow: hidden;
@@ -781,7 +791,7 @@ a { color: inherit; text-decoration: none; }
 .results::before {
   content: "";
   position: absolute; inset: 0;
-  background: linear-gradient(135deg, var(--success-soft), transparent 50%);
+  background: linear-gradient(135deg, color-mix(in srgb, var(--accent) 14%, transparent), transparent 50%);
   pointer-events: none;
 }
 .results.error { border-color: color-mix(in oklch, var(--danger) 30%, var(--border)); box-shadow: 0 12px 32px -10px var(--danger-soft), var(--shadow-sm); }
@@ -790,8 +800,8 @@ a { color: inherit; text-decoration: none; }
 .results-head { display: flex; align-items: center; gap: 12px; position: relative; }
 .results-dot {
   width: 10px; height: 10px; border-radius: 50%;
-  background: var(--success);
-  box-shadow: 0 0 0 5px var(--success-soft);
+  background: var(--accent);
+  box-shadow: 0 0 0 5px var(--accent-soft);
 }
 .results.error .results-dot { background: var(--danger); box-shadow: 0 0 0 5px var(--danger-soft); }
 .results-titleblock { flex: 1; min-width: 0; }
@@ -803,7 +813,7 @@ a { color: inherit; text-decoration: none; }
   font-size: 48px; font-weight: 700;
   letter-spacing: -.04em;
   margin: 12px 0 16px;
-  color: var(--success);
+  color: var(--accent);
   font-variant-numeric: tabular-nums;
   position: relative;
 }
