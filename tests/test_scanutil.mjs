@@ -60,6 +60,24 @@ test('flattenScan maps safety from risk', () => {
   assert.equal(rows.find(r => r.rowId === 'app_leftovers::Claude').safety, 'caution');
 });
 
+test('flattenScan: explicit safe risk -> safe, unknown/missing risk -> caution', () => {
+  const data = { scan: {
+    developer:    { risk: 'safe', subitems: [{ id: 'a', name: 'A' }] },
+    ios_backups:  { risk: 'weird', subitems: [{ id: 'b', name: 'B' }] }, // unknown
+    app_leftovers:{ subitems: [{ id: 'c', name: 'C' }] },                // missing risk
+  }};
+  const rows = ScanUtil.flattenScan(data);
+  assert.equal(rows.find(r => r.rowId === 'developer::a').safety, 'safe');
+  assert.equal(rows.find(r => r.rowId === 'ios_backups::b').safety, 'caution');
+  assert.equal(rows.find(r => r.rowId === 'app_leftovers::c').safety, 'caution');
+});
+
+test('flattenScan tolerates missing/malformed data', () => {
+  assert.deepEqual(ScanUtil.flattenScan(undefined), []);
+  assert.deepEqual(ScanUtil.flattenScan({}), []);
+  assert.deepEqual(ScanUtil.flattenScan({ scan: { developer: {} } }), []); // no subitems array
+});
+
 test('sortRows by size desc', () => {
   const rows = ScanUtil.sortRows(ScanUtil.flattenScan(SAMPLE), 'size', 'desc');
   assert.equal(rows[0].sizeBytes, 200);

@@ -21,7 +21,11 @@
     );
   }
 
-  const SAFETY_BY_RISK = { danger: 'danger', caution: 'caution' };
+  // Map a category risk to a safety badge. Unknown/missing risk falls back to
+  // the conservative 'caution' (never the reassuring 'safe') so an unexpected
+  // category label can't understate the risk of an item in the file list.
+  const SAFETY_BY_RISK = { danger: 'danger', caution: 'caution', safe: 'safe' };
+  function safetyForRisk(risk) { return SAFETY_BY_RISK[risk] || 'caution'; }
 
   function flattenScan(data) {
     const scan = (data && data.scan) || {};
@@ -29,7 +33,7 @@
     for (const catKey of FILELIST_CATEGORIES) {
       const info = scan[catKey];
       if (!info || !Array.isArray(info.subitems)) continue;
-      const safety = SAFETY_BY_RISK[info.risk] || 'safe';
+      const safety = safetyForRisk(info.risk);
       for (const sub of info.subitems) {
         rows.push({
           rowId: catKey + '::' + sub.id,
