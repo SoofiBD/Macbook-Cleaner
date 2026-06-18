@@ -191,3 +191,24 @@ def test_thin_snapshots_json_shape(tmp_path):
     data = json.loads(out.stdout)
     assert "success" in data
     assert "snapshots_before" in data
+
+
+def test_scan_json_includes_in_total_per_category(tmp_path):
+    # Her kategori bir boolean in_total bayrağı taşımalı; client toplamı
+    # yalnız in_total=true kategorilerden hesaplar (çift sayımı önler).
+    data = run_scan(tmp_path)
+    for cat_id, info in data["scan"].items():
+        assert "in_total" in info, cat_id
+        assert isinstance(info["in_total"], bool), cat_id
+    # app_uninstaller, app_leftovers ile çakıştığı için total dışı olmalı.
+    assert data["scan"]["app_uninstaller"]["in_total"] is False
+
+
+def test_total_bytes_equals_in_total_sum(tmp_path):
+    data = run_scan(tmp_path)
+    expected = sum(
+        info.get("size_bytes", 0)
+        for info in data["scan"].values()
+        if info.get("in_total")
+    )
+    assert data["total_bytes"] == expected

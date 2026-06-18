@@ -444,7 +444,7 @@
       [el.sysVersion, el.sysUser, el.sysDiskFree].forEach((e) => e.classList.remove('loading'));
 
       const scan = data.scan || {};
-      const totalBytes = data.total_bytes || Object.values(scan).reduce((a, s) => a + (s.size_bytes || 0), 0);
+      const totalBytes = window.ScanUtil.computeTotalBytes(data);
       const maxBytes = Math.max(...Object.values(scan).map((s) => s.size_bytes || 0), 1);
 
       // Update each category row

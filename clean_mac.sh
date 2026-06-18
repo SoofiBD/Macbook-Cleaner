@@ -2540,11 +2540,14 @@ ENDJSON
     local sz_h; sz_h=$(format_bytes "${CAT_SIZES[$i]}")
     local needs_sudo="false"
     [ "${CAT_NEEDS_SUDO[$i]}" -eq 1 ] && needs_sudo="true"
-    
+    local in_total="false"
+    [ "${CAT_IN_TOTAL[$i]}" -eq 1 ] && in_total="true"
+
     echo "    \"$id\": {"
     echo "      \"size_bytes\": ${CAT_SIZES[$i]},"
     echo "      \"size_human\": \"$sz_h\","
     echo "      \"needs_sudo\": $needs_sudo,"
+    echo "      \"in_total\": $in_total,"
     echo "      \"risk\": \"${CAT_RISKS[$i]}\""
 
     if [ "$id" = "app_leftovers" ]; then
