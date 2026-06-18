@@ -48,6 +48,16 @@ test('flattenScan only includes categories with subitems', () => {
   assert.equal(rows.length, 4); // 2 + 1 + 1
 });
 
+test('flattenScan excludes mail_downloads (no per-item server clean)', () => {
+  const data = { scan: {
+    app_leftovers: { subitems: [{ id: 'x', name: 'X' }] },
+    mail_downloads: { subitems: [{ id: 'm1', name: 'invoice.pdf' }] },
+  }};
+  const rows = ScanUtil.flattenScan(data);
+  assert.ok(!new Set(rows.map(r => r.catKey)).has('mail_downloads'));
+  assert.ok(!ScanUtil.FILELIST_CATEGORIES.includes('mail_downloads'));
+});
+
 test('flattenScan rowId is unique and stable', () => {
   const rows = ScanUtil.flattenScan(SAMPLE);
   assert.equal(new Set(rows.map(r => r.rowId)).size, rows.length);

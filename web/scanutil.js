@@ -6,10 +6,12 @@
   else root.ScanUtil = api;
 })(typeof window !== 'undefined' ? window : globalThis, function () {
 
-  // Categories that expose per-file sub-items (the only ones the file list uses).
+  // Categories that expose per-file sub-items AND support per-item cleaning.
+  // mail_downloads is intentionally excluded: the server has no per-item clean
+  // for it, so a single selection would wipe the whole folder — see review.
   const FILELIST_CATEGORIES = [
     'app_leftovers', 'developer', 'browser_full',
-    'ios_backups', 'app_uninstaller', 'mail_downloads', 'project_artifacts',
+    'ios_backups', 'app_uninstaller', 'project_artifacts',
   ];
 
   function computeTotalBytes(data) {
@@ -102,7 +104,6 @@
       ios_backups_selected: [],
       app_uninstaller_selected: [],
       project_artifacts_selected: [],
-      mail_downloads_selected: [],
     };
     const idxSet = new Set();
     for (const r of selectedRows) {
