@@ -1046,9 +1046,11 @@
   const tabCleanup = $('#tab-cleanup');
   const tabUninstaller = $('#tab-uninstaller');
   const tabFiles = $('#tab-files');
+  const tabHistory = $('#tab-history');
   const cleanupTabContent = $('#cleanupTabContent');
   const uninstallerTabContent = $('#uninstallerTabContent');
   const filesTabContent = $('#filesTabContent');
+  const historyTabContent = $('#historyTabContent');
   const appsSearch = $('#appsSearch');
 
   let allApplications = [];
@@ -1058,6 +1060,7 @@
       cleanup:     [tabCleanup, cleanupTabContent],
       uninstaller: [tabUninstaller, uninstallerTabContent],
       files:       [tabFiles, filesTabContent],
+      history:     [tabHistory, historyTabContent],
     };
     Object.entries(map).forEach(([id, [btn, content]]) => {
       const active = id === tabId;
@@ -1067,11 +1070,44 @@
     });
     if (tabId === 'uninstaller') loadApplications();
     if (tabId === 'files') renderFileList();
+    if (tabId === 'history') loadHistory();
   }
 
   tabCleanup.addEventListener('click', () => showTab('cleanup'));
   tabUninstaller.addEventListener('click', () => showTab('uninstaller'));
   tabFiles.addEventListener('click', () => showTab('files'));
+  tabHistory.addEventListener('click', () => showTab('history'));
+
+  /* ──────────────────────────────────────────────────────────
+     Cleanup history tab
+     ────────────────────────────────────────────────────────── */
+  async function loadHistory() {
+    const list = historyTabContent.querySelector('#historyList');
+    if (!list) return;
+    list.innerHTML = '<p class="muted">Loading…</p>';
+    try {
+      const rows = await apiFetch('/api/history');
+      if (!Array.isArray(rows) || rows.length === 0) {
+        list.innerHTML = '<p class="muted">No cleanup history yet.</p>';
+        return;
+      }
+      list.innerHTML = rows.map((r) => {
+        const when = new Date((r.ts || 0) * 1000).toLocaleString();
+        const badge = r.recoverable
+          ? '<span class="badge badge-ok">recoverable</span>'
+          : '<span class="badge badge-warn">permanent</span>';
+        return `<div class="history-row">
+          <span class="history-when">${escapeHtml(when)}</span>
+          ${badge}
+          <span class="history-size">${escapeHtml(r.size_human || '')}</span>
+          <span class="history-cat">${escapeHtml(r.category || '')}</span>
+          <span class="history-path">${escapeHtml(r.path || '')}</span>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      list.innerHTML = '<p class="muted">Could not load history.</p>';
+    }
+  }
 
   /* ──────────────────────────────────────────────────────────
      Files (cleanable files) tab

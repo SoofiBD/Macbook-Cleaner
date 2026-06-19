@@ -480,6 +480,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             self._handle_apps()
         elif path == "/api/forecast":
             self._handle_forecast()
+        elif path == "/api/history":
+            self._handle_history()
         else:
             self._serve_static(path)
 
@@ -518,6 +520,13 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         data, err = self._run_script(["--status-json"], timeout=15)
         if err:
             self._send_error_json(f"Status error: {err}")
+        else:
+            self._send_json(data)
+
+    def _handle_history(self):
+        data, err = self._run_script(["--history-json"], timeout=15)
+        if err:
+            self._send_error_json(f"History error: {err}")
         else:
             self._send_json(data)
 
