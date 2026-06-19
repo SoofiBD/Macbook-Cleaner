@@ -313,3 +313,42 @@ class TestTokenCompare(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestHistoryRoute(unittest.TestCase):
+    """GET /api/history shells out to clean_mac.sh --history-json and returns a list."""
+
+    def test_history_route_returns_list(self):
+        import http.client
+        import http.server
+        import json as _json
+        import os
+        import tempfile
+        import threading
+        import importlib.util
+
+        # Load the server module by path.
+        web_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web")
+        spec = importlib.util.spec_from_file_location(
+            "cleanup_server", os.path.join(web_dir, "server.py"))
+        server = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(server)
+
+        home = tempfile.mkdtemp()
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = home  # isolated => empty history => []
+        httpd = http.server.HTTPServer(("127.0.0.1", 0), server.CleanupHandler)
+        port = httpd.server_address[1]
+        t = threading.Thread(target=httpd.serve_forever, daemon=True)
+        t.start()
+        try:
+            conn = http.client.HTTPConnection("127.0.0.1", port, timeout=20)
+            conn.request("GET", "/api/history", headers={"Host": f"127.0.0.1:{port}"})
+            resp = conn.getresponse()
+            body = resp.read().decode()
+            self.assertEqual(resp.status, 200, body)
+            self.assertIsInstance(_json.loads(body), list)
+        finally:
+            httpd.shutdown()
+            if old_home is not None:
+                os.environ["HOME"] = old_home

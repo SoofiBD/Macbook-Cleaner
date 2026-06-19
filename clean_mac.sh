@@ -315,6 +315,8 @@ L() {
     en::broken_category_row)  echo "ERROR: broken CATEGORIES row" ;;
     tr::spotlight_rebuild)    echo "Spotlight indexing rebuilt successfully." ;;
     en::spotlight_rebuild)    echo "Spotlight indexing rebuilt successfully." ;;
+    tr::no_history)           echo "Henüz temizlik geçmişi yok." ;;
+    en::no_history)           echo "No cleanup history yet." ;;
 
     # ── Fallback ─────────────────────────────────────────────
     *) echo "$key" ;;
@@ -531,6 +533,40 @@ json_escape_str() {
   echo "$s"
 }
 
+# ─── Operation Log ───────────────────────────────────────────────────────────
+# Append-only audit trail of real deletions. Paired with trash-first deletion so
+# users can see what was removed and whether it is recoverable from Trash.
+OPLOG_FILE="$HOME/.cache/apple-cleanup/operations.log"
+OPLOG_MAX_BYTES="${APPLE_CLEANUP_OPLOG_MAX_BYTES:-5242880}"
+
+# oplog_record <action> <bytes> <path> <category>
+# action: trash (recoverable) | delete (permanent). Never fails the caller.
+oplog_record() {
+  [ "${APPLE_CLEANUP_NO_OPLOG:-0}" = "1" ] && return 0
+  [ "${DRYRUN:-0}" = "1" ] && return 0
+  local action="$1" bytes="$2" path="$3" category="${4:-}"
+  # Keep each record single-line: collapse tabs/newlines in the path to spaces.
+  path="${path//$'\t'/ }"
+  path="${path//$'\n'/ }"
+  local dir; dir="$(dirname "$OPLOG_FILE")"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  # Rotate: if the log is over the cap, keep the most recent half.
+  if [ -f "$OPLOG_FILE" ]; then
+    local sz; sz=$(wc -c <"$OPLOG_FILE" 2>/dev/null | tr -d ' ')
+    if [ -n "$sz" ] && [ "$sz" -gt "$OPLOG_MAX_BYTES" ] 2>/dev/null; then
+      local lines half
+      lines=$(wc -l <"$OPLOG_FILE" 2>/dev/null | tr -d ' ')
+      half=$(( lines / 2 ))
+      [ "$half" -lt 1 ] && half=1
+      tail -n "$half" "$OPLOG_FILE" >"$OPLOG_FILE.tmp" 2>/dev/null \
+        && mv "$OPLOG_FILE.tmp" "$OPLOG_FILE" 2>/dev/null
+    fi
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$action" "$bytes" "$path" "$category" \
+    >>"$OPLOG_FILE" 2>/dev/null || true
+  return 0
+}
+
 # Days since a path was last modified (0 if unknown / inaccessible).
 dir_age_days() {
   local p="$1" mt now
@@ -619,6 +655,9 @@ _should_force_rm() {
 # Context variable: set by clean functions to indicate sudo context
 _CURRENT_NEEDS_SUDO=0
 _CURRENT_IS_TRASH_EMPTY=0
+# Category key for the item currently being cleaned (set by run_clean); used to
+# tag operation-log records. Empty when cleanup runs outside a category loop.
+_CURRENT_CATEGORY=""
 
 safe_rm() {
   local path="$1"
@@ -650,12 +689,14 @@ safe_rm() {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     else
       rm -rf "$path" 2>/dev/null && {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     fi
   else
@@ -664,6 +705,7 @@ safe_rm() {
       success "$label: ${BOLD}${sz_h}${NC} $(L trashed)"
       TOTAL_FREED=$((TOTAL_FREED + sz_b))
       TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+      oplog_record "trash" "$sz_b" "$path" "$_CURRENT_CATEGORY"
     else
       err "$label $(L delete_failed)"
     fi
@@ -706,12 +748,14 @@ safe_rm_contents() {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     else
       find "$path" -maxdepth 1 -mindepth 1 -exec rm -rf {} + 2>/dev/null && {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     fi
   else
@@ -725,6 +769,7 @@ safe_rm_contents() {
       success "$label: ${BOLD}${sz_h}${NC} $(L trashed)"
       TOTAL_FREED=$((TOTAL_FREED + sz_b))
       TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+      oplog_record "trash" "$sz_b" "$path" "$_CURRENT_CATEGORY"
     fi
   fi
 }
@@ -1823,7 +1868,9 @@ run_clean() {
         warn "$(cat_name "$real_idx") $(L skipped) ($(L sudo_required))."
         continue
       fi
+      _CURRENT_CATEGORY="${CAT_IDS[$real_idx]}"
       "${fn_map[$real_idx]}"
+      _CURRENT_CATEGORY=""
     fi
   done
 }
@@ -1841,6 +1888,51 @@ print_report() {
 }
 
 # ─── JSON Output Functions (Web API) ─────────────────────────────────────────
+
+# Emit the operation log as a JSON array, newest first. Malformed lines (no
+# numeric timestamp) are skipped. Empty/missing log yields [].
+do_history_json() {
+  echo -n "["
+  local first=true
+  if [ -f "$OPLOG_FILE" ]; then
+    local ts action bytes path category recoverable size_h
+    while IFS=$'\t' read -r ts action bytes path category; do
+      [ -z "$ts" ] && continue
+      case "$ts" in *[!0-9]*) continue ;; esac
+      case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
+      recoverable="false"
+      [ "$action" = "trash" ] && recoverable="true"
+      size_h=$(format_bytes "$bytes")
+      $first || echo -n ","
+      first=false
+      printf '{"ts":%s,"action":"%s","bytes":%s,"size_human":"%s","path":"%s","category":"%s","recoverable":%s}' \
+        "$ts" "$(json_escape_str "$action")" "$bytes" \
+        "$(json_escape_str "$size_h")" "$(json_escape_str "$path")" \
+        "$(json_escape_str "${category:-}")" "$recoverable"
+    done < <(tail -r "$OPLOG_FILE" 2>/dev/null)
+  fi
+  echo "]"
+}
+
+# Human-readable operation history, newest first.
+do_history() {
+  if [ ! -s "$OPLOG_FILE" ]; then
+    echo "  $(L no_history)"
+    return 0
+  fi
+  printf "  %-19s  %-9s  %-10s  %-14s  %s\n" "When" "Action" "Size" "Category" "Path"
+  local ts action bytes path category when size_h tag
+  while IFS=$'\t' read -r ts action bytes path category; do
+    [ -z "$ts" ] && continue
+    case "$ts" in *[!0-9]*) continue ;; esac
+    case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
+    when=$(date -r "$ts" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$ts")
+    size_h=$(format_bytes "$bytes")
+    tag="$action"
+    [ "$action" = "trash" ] && tag="trash↺"
+    printf "  %-19s  %-9s  %-10s  %-14s  %s\n" "$when" "$tag" "$size_h" "${category:-}" "$path"
+  done < <(tail -r "$OPLOG_FILE" 2>/dev/null)
+}
 
 scan_app_leftovers_subitems_json() {
   local first=true
@@ -2725,6 +2817,14 @@ main() {
         do_status_json
         exit 0
         ;;
+      --history)
+        do_history
+        exit 0
+        ;;
+      --history-json)
+        do_history_json
+        exit 0
+        ;;
       --spotlight-reindex)
         do_spotlight_reindex
         exit 0
@@ -2883,4 +2983,7 @@ main() {
   print_report
 }
 
-main "$@"
+# Only run main when executed directly, not when sourced (e.g. by tests).
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  main "$@"
+fi

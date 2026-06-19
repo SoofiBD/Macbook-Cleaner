@@ -185,7 +185,24 @@
         <svg class="ic"><use href="#i-leftover"/></svg>
         <span>Files</span>
       </button>
+      <button class="tab-btn" role="tab" aria-selected="false" aria-controls="historyTabContent" id="tab-history" type="button">
+        <svg class="ic"><use href="#i-leftover"/></svg>
+        <span>History</span>
+      </button>
     </nav>
+
+    <!-- ═══ History Tab Content ═══ -->
+    <div id="historyTabContent" hidden>
+      <section class="section">
+        <div class="section-head">
+          <div class="section-titleblock">
+            <h2 class="section-title">Cleanup History</h2>
+            <span class="section-sub">Newest first. Recoverable items can be restored from Trash.</span>
+          </div>
+        </div>
+        <div id="historyList" class="history-list" aria-live="polite"></div>
+      </section>
+    </div>
 
     <!-- ═══ Cleanup Tab Content ═══ -->
     <div id="cleanupTabContent">
