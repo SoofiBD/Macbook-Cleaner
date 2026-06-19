@@ -1,3 +1,4 @@
+import json
 import os
 import subprocess
 from pathlib import Path
@@ -124,3 +125,47 @@ def test_rotation_truncates_when_over_cap(tmp_path):
     # The newest record survived, the oldest were dropped.
     assert after_lines[-1].split("\t")[3] == "/tmp/new"
     assert after_lines[0].split("\t")[0] != "0"
+
+
+def test_history_json_empty_is_array(tmp_path):
+    env = dict(os.environ, HOME=str(tmp_path))
+    out = subprocess.run(["bash", str(SCRIPT), "--history-json"],
+                         env=env, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert json.loads(out.stdout) == []
+
+
+def test_history_json_newest_first_with_fields(tmp_path):
+    log = _log_path(tmp_path)
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        "100\ttrash\t2048\t/tmp/old\tuser_cache\n"
+        "200\tdelete\t4096\t/tmp/new\tsystem_cache\n"
+    )
+    env = dict(os.environ, HOME=str(tmp_path))
+    out = subprocess.run(["bash", str(SCRIPT), "--history-json"],
+                         env=env, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    rows = json.loads(out.stdout)
+    assert [r["ts"] for r in rows] == [200, 100]  # newest first
+    assert rows[0]["action"] == "delete"
+    assert rows[0]["recoverable"] is False
+    assert rows[1]["recoverable"] is True
+    assert rows[0]["bytes"] == 4096
+    assert "size_human" in rows[0]
+    assert rows[1]["path"] == "/tmp/old"
+
+
+def test_history_json_skips_malformed_lines(tmp_path):
+    log = _log_path(tmp_path)
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        "garbage line without tabs\n"
+        "150\ttrash\t512\t/tmp/ok\tlogs\n"
+    )
+    env = dict(os.environ, HOME=str(tmp_path))
+    out = subprocess.run(["bash", str(SCRIPT), "--history-json"],
+                         env=env, capture_output=True, text=True, timeout=30)
+    rows = json.loads(out.stdout)
+    assert len(rows) == 1
+    assert rows[0]["path"] == "/tmp/ok"

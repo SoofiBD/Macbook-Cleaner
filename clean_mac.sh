@@ -315,6 +315,8 @@ L() {
     en::broken_category_row)  echo "ERROR: broken CATEGORIES row" ;;
     tr::spotlight_rebuild)    echo "Spotlight indexing rebuilt successfully." ;;
     en::spotlight_rebuild)    echo "Spotlight indexing rebuilt successfully." ;;
+    tr::no_history)           echo "Henüz temizlik geçmişi yok." ;;
+    en::no_history)           echo "No cleanup history yet." ;;
 
     # ── Fallback ─────────────────────────────────────────────
     *) echo "$key" ;;
@@ -1887,6 +1889,51 @@ print_report() {
 
 # ─── JSON Output Functions (Web API) ─────────────────────────────────────────
 
+# Emit the operation log as a JSON array, newest first. Malformed lines (no
+# numeric timestamp) are skipped. Empty/missing log yields [].
+do_history_json() {
+  echo -n "["
+  local first=true
+  if [ -f "$OPLOG_FILE" ]; then
+    local ts action bytes path category recoverable size_h
+    while IFS=$'\t' read -r ts action bytes path category; do
+      [ -z "$ts" ] && continue
+      case "$ts" in *[!0-9]*) continue ;; esac
+      case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
+      recoverable="false"
+      [ "$action" = "trash" ] && recoverable="true"
+      size_h=$(format_bytes "$bytes")
+      $first || echo -n ","
+      first=false
+      printf '{"ts":%s,"action":"%s","bytes":%s,"size_human":"%s","path":"%s","category":"%s","recoverable":%s}' \
+        "$ts" "$(json_escape_str "$action")" "$bytes" \
+        "$(json_escape_str "$size_h")" "$(json_escape_str "$path")" \
+        "$(json_escape_str "${category:-}")" "$recoverable"
+    done < <(tail -r "$OPLOG_FILE" 2>/dev/null)
+  fi
+  echo "]"
+}
+
+# Human-readable operation history, newest first.
+do_history() {
+  if [ ! -s "$OPLOG_FILE" ]; then
+    echo "  $(L no_history)"
+    return 0
+  fi
+  printf "  %-19s  %-9s  %-10s  %-14s  %s\n" "When" "Action" "Size" "Category" "Path"
+  local ts action bytes path category when size_h tag
+  while IFS=$'\t' read -r ts action bytes path category; do
+    [ -z "$ts" ] && continue
+    case "$ts" in *[!0-9]*) continue ;; esac
+    case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
+    when=$(date -r "$ts" "+%Y-%m-%d %H:%M:%S" 2>/dev/null || echo "$ts")
+    size_h=$(format_bytes "$bytes")
+    tag="$action"
+    [ "$action" = "trash" ] && tag="trash↺"
+    printf "  %-19s  %-9s  %-10s  %-14s  %s\n" "$when" "$tag" "$size_h" "${category:-}" "$path"
+  done < <(tail -r "$OPLOG_FILE" 2>/dev/null)
+}
+
 scan_app_leftovers_subitems_json() {
   local first=true
   local item base s sz_h is_orph
@@ -2768,6 +2815,14 @@ main() {
         ;;
       --status-json)
         do_status_json
+        exit 0
+        ;;
+      --history)
+        do_history
+        exit 0
+        ;;
+      --history-json)
+        do_history_json
         exit 0
         ;;
       --spotlight-reindex)
