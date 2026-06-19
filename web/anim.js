@@ -196,7 +196,8 @@
     },
 
     /* Sweep the disk donut to `pct` (0-100) and count the % label up.
-       Returns true when it handled the update, false to let the caller fall back. */
+       Always returns true; the caller (animateDonut) gates on `window.gsap`
+       before delegating here, so there is no caller-side fallback to signal. */
     donut(pct) {
       const fill = $('#donutFill'), num = $('#donutNum');
       const p = Math.max(0, Math.min(100, pct || 0));
