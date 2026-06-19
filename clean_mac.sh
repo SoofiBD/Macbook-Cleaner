@@ -531,6 +531,40 @@ json_escape_str() {
   echo "$s"
 }
 
+# ─── Operation Log ───────────────────────────────────────────────────────────
+# Append-only audit trail of real deletions. Paired with trash-first deletion so
+# users can see what was removed and whether it is recoverable from Trash.
+OPLOG_FILE="$HOME/.cache/apple-cleanup/operations.log"
+OPLOG_MAX_BYTES="${APPLE_CLEANUP_OPLOG_MAX_BYTES:-5242880}"
+
+# oplog_record <action> <bytes> <path> <category>
+# action: trash (recoverable) | delete (permanent). Never fails the caller.
+oplog_record() {
+  [ "${APPLE_CLEANUP_NO_OPLOG:-0}" = "1" ] && return 0
+  [ "$DRYRUN" = "1" ] && return 0
+  local action="$1" bytes="$2" path="$3" category="${4:-}"
+  # Keep each record single-line: collapse tabs/newlines in the path to spaces.
+  path="${path//$'\t'/ }"
+  path="${path//$'\n'/ }"
+  local dir; dir="$(dirname "$OPLOG_FILE")"
+  mkdir -p "$dir" 2>/dev/null || return 0
+  # Rotate: if the log is over the cap, keep the most recent half.
+  if [ -f "$OPLOG_FILE" ]; then
+    local sz; sz=$(wc -c <"$OPLOG_FILE" 2>/dev/null | tr -d ' ')
+    if [ -n "$sz" ] && [ "$sz" -gt "$OPLOG_MAX_BYTES" ] 2>/dev/null; then
+      local lines half
+      lines=$(wc -l <"$OPLOG_FILE" 2>/dev/null | tr -d ' ')
+      half=$(( lines / 2 ))
+      [ "$half" -lt 1 ] && half=1
+      tail -n "$half" "$OPLOG_FILE" >"$OPLOG_FILE.tmp" 2>/dev/null \
+        && mv "$OPLOG_FILE.tmp" "$OPLOG_FILE" 2>/dev/null
+    fi
+  fi
+  printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$action" "$bytes" "$path" "$category" \
+    >>"$OPLOG_FILE" 2>/dev/null || true
+  return 0
+}
+
 # Days since a path was last modified (0 if unknown / inaccessible).
 dir_age_days() {
   local p="$1" mt now
@@ -2883,4 +2917,7 @@ main() {
   print_report
 }
 
-main "$@"
+# Only run main when executed directly, not when sourced (e.g. by tests).
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  main "$@"
+fi
