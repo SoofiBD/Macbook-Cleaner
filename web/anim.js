@@ -180,6 +180,49 @@
       if (reduce || !el) return;
       g.from(el, { y: 18, opacity: 0, scale: 0.98, duration: 0.45, ease: 'back.out(1.3)' });
     },
+
+    /* Organic infinite drift for the background glass blobs (transforms only). */
+    blobs() {
+      if (reduce) return;
+      const defs = [
+        ['.blob-a', 60, 40, 20],
+        ['.blob-b', -50, 30, 24],
+        ['.blob-c', 30, -50, 22],
+      ];
+      defs.forEach(([sel, x, y, dur]) => {
+        if (!$(sel)) return;
+        g.to(sel, { x, y, duration: dur, ease: 'sine.inOut', repeat: -1, yoyo: true });
+      });
+    },
+
+    /* Sweep the disk donut to `pct` (0-100) and count the % label up.
+       Always returns true; the caller (animateDonut) gates on `window.gsap`
+       before delegating here, so there is no caller-side fallback to signal. */
+    donut(pct) {
+      const fill = $('#donutFill'), num = $('#donutNum');
+      const p = Math.max(0, Math.min(100, pct || 0));
+      if (reduce) {
+        if (fill) fill.setAttribute('stroke-dasharray', p + ' ' + (100 - p));
+        if (num) num.textContent = Math.round(p) + '%';
+        return true;
+      }
+      if (fill) {
+        g.fromTo(fill, { attr: { 'stroke-dasharray': '0 100' } },
+          { attr: { 'stroke-dasharray': p + ' ' + (100 - p) }, duration: 1, ease: 'power2.out' });
+      }
+      if (num) {
+        const o = { v: 0 };
+        g.to(o, { v: p, duration: 1, ease: 'power1.out',
+          onUpdate: () => { num.textContent = Math.round(o.v) + '%'; } });
+      }
+      return true;
+    },
+
+    /* Brief cross-fade pulse on the shell when the theme flips. */
+    themeSwitch() {
+      if (reduce) return;
+      g.fromTo('.app', { opacity: 0.6 }, { opacity: 1, duration: 0.35, ease: 'power2.out' });
+    },
   };
 
   window.AppAnim = AppAnim;

@@ -14,92 +14,92 @@
      ────────────────────────────────────────────────────────── */
   const CATEGORIES = [
     {
-      key: 'user_cache',    index: 1,  name: 'Kullanıcı Cache',
-      desc: 'Uygulama önbellek dosyaları',
+      key: 'user_cache',    index: 1,  name: 'User Caches',
+      desc: 'App cache files',
       icon: 'i-cache', color: '#4d8eff', defaultChecked: true, danger: false, tags: [],
     },
     {
-      key: 'system_cache',  index: 2,  name: 'Sistem Cache',
-      desc: 'Sistem seviyesi önbellek',
+      key: 'system_cache',  index: 2,  name: 'System Cache',
+      desc: 'System-level cache',
       icon: 'i-cpu', color: '#6f6ff7', defaultChecked: true, danger: false,
       tags: [{ icon: 'i-lock', label: 'sudo', style: 'amber' }],
     },
     {
-      key: 'app_leftovers', index: 3,  name: 'Uygulama Kalıntıları',
-      desc: 'Kaldırılmış uygulama artıkları',
+      key: 'app_leftovers', index: 3,  name: 'App Leftovers',
+      desc: 'Leftovers from removed apps',
       icon: 'i-leftover', color: '#a26bf7', defaultChecked: true, danger: false, tags: [],
     },
     {
-      key: 'logs',          index: 4,  name: 'Loglar',
-      desc: 'Sistem ve uygulama kayıtları',
+      key: 'logs',          index: 4,  name: 'Logs',
+      desc: 'System and app logs',
       icon: 'i-log', color: '#0bb8c9', defaultChecked: true, danger: false, tags: [],
     },
     {
-      key: 'temp_files',    index: 5,  name: 'Geçici Dosyalar',
-      desc: 'Geçici ve ara dosyalar',
+      key: 'temp_files',    index: 5,  name: 'Temporary Files',
+      desc: 'Temporary and intermediate files',
       icon: 'i-temp', color: '#16a34a', defaultChecked: true, danger: false, tags: [],
     },
     {
-      key: 'developer',     index: 6,  name: 'Geliştirici',
-      desc: 'Xcode DerivedData ve bozuk linkler',
+      key: 'developer',     index: 6,  name: 'Developer',
+      desc: 'Xcode DerivedData and broken links',
       icon: 'i-dev', color: '#d97706', defaultChecked: true, danger: false, tags: [],
     },
     {
-      key: 'trash',         index: 7,  name: 'Çöp Kutusu',
-      desc: 'Çöp kutusundaki dosyalar',
+      key: 'trash',         index: 7,  name: 'Trash',
+      desc: 'Files in the Trash',
       icon: 'i-trash', color: '#8b8f99', defaultChecked: true, danger: false, tags: [],
     },
     {
-      key: 'browser_cache', index: 8,  name: 'Tarayıcı Cache',
-      desc: 'Sadece önbellek — çerezler & oturumlar korunur',
+      key: 'browser_cache', index: 8,  name: 'Browser Cache',
+      desc: 'Cache only — cookies & sessions kept',
       icon: 'i-browser', color: '#f59e0b', defaultChecked: false, danger: false, tags: [],
     },
     {
-      key: 'browser_full',  index: 9,  name: 'Tarayıcı Tüm Veri',
-      desc: 'Çerezler, geçmiş ve profil verisi',
+      key: 'browser_full',  index: 9,  name: 'Browser All Data',
+      desc: 'Cookies, history and profile data',
       icon: 'i-browser-warn', color: '#dc2626', defaultChecked: false, danger: true,
-      tags: [{ icon: 'i-warn', label: 'oturumlar kapanır', style: 'red' }],
+      tags: [{ icon: 'i-warn', label: 'logs you out', style: 'red' }],
     },
     {
-      key: 'ios_backups',   index: 10, name: 'iOS Yedekleri',
-      desc: 'iPhone/iPad MobileSync yedekleri',
+      key: 'ios_backups',   index: 10, name: 'iOS Backups',
+      desc: 'iPhone/iPad MobileSync backups',
       icon: 'i-phone', color: '#ef4444', defaultChecked: false, danger: true,
-      tags: [{ icon: 'i-warn', label: 'silmeden önce kontrol', style: 'red' }],
+      tags: [{ icon: 'i-warn', label: 'check before deleting', style: 'red' }],
     },
     {
-      key: 'app_uninstaller', index: 11, name: 'Tam Uygulama Kaldırıcı',
-      desc: '/Applications uygulamaları ve tüm kalıntıları',
+      key: 'app_uninstaller', index: 11, name: 'Full App Uninstaller',
+      desc: 'Apps in /Applications and all their leftovers',
       icon: 'i-uninstall', color: '#c2410c', defaultChecked: false, danger: true,
-      tags: [{ icon: 'i-warn', label: 'uygulamayı siler', style: 'red' }],
+      tags: [{ icon: 'i-warn', label: 'deletes the app', style: 'red' }],
     },
     {
-      key: 'mail_downloads', index: 12, name: 'Mail İndirilenleri',
-      desc: 'Mail eklentilerinden indirilen dosyalar',
+      key: 'mail_downloads', index: 12, name: 'Mail Downloads',
+      desc: 'Files downloaded from Mail attachments',
       icon: 'i-mail', color: '#0ea5e9', defaultChecked: true, danger: false, tags: [],
     },
     {
-      key: 'diagnostic_reports', index: 13, name: 'Tanılama Raporları',
-      desc: 'Çökme ve tanılama kayıtları',
+      key: 'diagnostic_reports', index: 13, name: 'Diagnostic Reports',
+      desc: 'Crash and diagnostic logs',
       icon: 'i-log', color: '#0bb8c9', defaultChecked: true, danger: false, tags: [],
     },
     {
       key: 'quicklook_cache', index: 14, name: 'QuickLook Cache',
-      desc: 'Önizleme küçük resim önbelleği',
+      desc: 'Preview thumbnail cache',
       icon: 'i-cache', color: '#4d8eff', defaultChecked: true, danger: false, tags: [],
     },
     {
-      key: 'saved_app_state', index: 15, name: 'Kaydedilmiş Uygulama Durumu',
-      desc: 'Pencere/oturum geri yükleme verisi',
+      key: 'saved_app_state', index: 15, name: 'Saved Application State',
+      desc: 'Window/session restore data',
       icon: 'i-temp', color: '#d97706', defaultChecked: false, danger: false, tags: [],
     },
     {
-      key: 'other_trash', index: 16, name: 'Diğer Ciltlerin Çöpü',
-      desc: 'Harici disklerdeki çöp kutuları',
+      key: 'other_trash', index: 16, name: 'Trash on Other Volumes',
+      desc: 'Trash bins on external disks',
       icon: 'i-trash', color: '#8b8f99', defaultChecked: true, danger: false, tags: [],
     },
     {
-      key: 'project_artifacts', index: 17, name: 'Proje Yapıları',
-      desc: 'Eski node_modules, target, .build, build…',
+      key: 'project_artifacts', index: 17, name: 'Project Builds',
+      desc: 'Old node_modules, target, .build, build…',
       icon: 'i-wrench', color: '#16a34a', defaultChecked: false, danger: false, tags: [],
     },
   ];
@@ -184,7 +184,7 @@
   };
 
   function initTheme() {
-    const t = localStorage.getItem('ac-theme') || 'light';
+    const t = localStorage.getItem('ac-theme') || 'dark';
     document.documentElement.setAttribute('data-theme', t);
     const p = localStorage.getItem('ac-palette') || 'blue';
     applyPalette(p);
@@ -195,7 +195,8 @@
     const next = cur === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
     localStorage.setItem('ac-theme', next);
-    termLog(`Tema değiştirildi: ${next === 'dark' ? 'koyu' : 'açık'}`, 'info');
+    window.AppAnim?.themeSwitch?.();
+    termLog(`Theme changed: ${next === 'dark' ? 'dark' : 'light'}`, 'info');
   }
 
   function applyPalette(name) {
@@ -275,7 +276,7 @@
     });
 
     el.cats = $$('.cat[data-category]');
-    if (el.categoryCount) el.categoryCount.textContent = `${CATEGORIES.length} kategori`;
+    if (el.categoryCount) el.categoryCount.textContent = `${CATEGORIES.length} categories`;
   }
 
   /* ──────────────────────────────────────────────────────────
@@ -358,7 +359,7 @@
         ...(options.headers || {}),
       },
     });
-    if (!res.ok) throw new Error(`Sunucu hatası (HTTP ${res.status})`);
+    if (!res.ok) throw new Error(`Server error (HTTP ${res.status})`);
     const data = await res.json();
     if (!data.success && data.error) throw new Error(data.error);
     return data;
@@ -368,7 +369,7 @@
      System status
      ────────────────────────────────────────────────────────── */
   async function fetchStatus() {
-    termLog('Sistem bilgileri alınıyor…', 'info');
+    termLog('Reading system info…', 'info');
     try {
       const data = await apiFetch('/api/status');
       el.sysVersion.textContent = data.macos_version || '—';
@@ -381,9 +382,9 @@
       animateDonut(usedPct);
       el.diskBarFill.style.width = usedPct + '%';
 
-      termLog(`macOS ${data.macos_version} · ${data.user} · ${data.disk_free} boş`, 'success');
+      termLog(`macOS ${data.macos_version} · ${data.user} · ${data.disk_free} free`, 'success');
     } catch (err) {
-      termLog(`Sistem bilgisi alınamadı: ${err.message}`, 'error');
+      termLog(`Could not read system info: ${err.message}`, 'error');
       [el.sysVersion, el.sysUser, el.sysDiskFree].forEach((e) => {
         e.textContent = '—';
         e.classList.remove('loading');
@@ -398,14 +399,14 @@
       const data = await apiFetch('/api/forecast');
       if (!data || !data.success) return;
       if (data.days_until_full != null) {
-        el.sysForecast.textContent = `~${data.days_until_full} gün içinde dolacak`;
+        el.sysForecast.textContent = `full in ~${data.days_until_full} days`;
         el.forecastChip.hidden = false;
-        termLog(`Depolama tahmini: ~${data.days_until_full} gün içinde dolabilir.`, 'info');
+        termLog(`Storage forecast: may be full in ~${data.days_until_full} days.`, 'info');
       } else if (data.history_points < 2) {
         // Not enough history yet — keep collecting, stay quiet in the UI.
         el.forecastChip.hidden = true;
       } else {
-        el.sysForecast.textContent = 'Sabit — risk yok';
+        el.sysForecast.textContent = 'Stable — no risk';
         el.forecastChip.hidden = false;
       }
     } catch (err) {
@@ -414,6 +415,9 @@
   }
 
   function animateDonut(pct) {
+    // Prefer the GSAP sweep when GSAP is actually loaded; otherwise fall back
+    // to the plain attribute set + numeric tween so the donut still renders.
+    if (window.gsap && window.AppAnim?.donut?.(pct)) return;
     el.donutFill.setAttribute('stroke-dasharray', `${pct} ${100 - pct}`);
     tween(0, pct, 900, (v) => {
       el.donutNum.textContent = Math.round(v) + '%';
@@ -430,11 +434,11 @@
     el.btnClean.disabled = true;
     el.resultsPanel.hidden = true;
     el.hero.setAttribute('data-state', 'scanning');
-    el.heroEyebrow.textContent = 'Tarama yapılıyor…';
+    el.heroEyebrow.textContent = 'Scanning…';
     $$('.subitems').forEach((s) => s.remove());
     el.cats.forEach((c) => c.removeAttribute('data-open'));
 
-    termLog('Tarama başlatılıyor…', 'info');
+    termLog('Starting scan…', 'info');
 
     try {
       const data = await apiFetch('/api/scan');
@@ -463,7 +467,7 @@
         if (riskEl) {
           const risk = info.risk;
           if (risk === 'danger' || risk === 'caution') {
-            riskEl.textContent = risk === 'danger' ? '⚠ Riskli' : '⚠ Dikkat';
+            riskEl.textContent = risk === 'danger' ? '⚠ Risky' : '⚠ Caution';
             riskEl.className = `cat-risk risk-${risk}`;
           } else {
             riskEl.textContent = '';
@@ -490,16 +494,16 @@
       // Hero number + stacked bar
       revealHeroResult(scan, totalBytes);
 
-      el.heroEyebrow.textContent = `Tarama tamamlandı · ${data.total_human || formatBytes(totalBytes)} temizlenebilir`;
+      el.heroEyebrow.textContent = `Scan complete · ${data.total_human || formatBytes(totalBytes)} can be cleaned`;
       el.hero.setAttribute('data-state', 'scanned');
-      termLog(`Tarama tamamlandı — toplam ${data.total_human || formatBytes(totalBytes)}`, 'success');
+      termLog(`Scan complete — total ${data.total_human || formatBytes(totalBytes)}`, 'success');
 
       window.AppAnim?.afterScan?.();
       el.btnClean.disabled = false;
     } catch (err) {
-      termLog(`Tarama hatası: ${err.message}`, 'error');
+      termLog(`Scan error: ${err.message}`, 'error');
       el.hero.setAttribute('data-state', 'idle');
-      el.heroEyebrow.textContent = 'Sunucu çalışmıyor · Tarama yapılamadı';
+      el.heroEyebrow.textContent = 'Server not running · Scan failed';
     } finally {
       setLoading(el.btnScan, false);
       isLoading = false;
@@ -508,8 +512,8 @@
 
   function revealHeroResult(scan, totalBytes) {
     // Title / lead transform
-    el.heroTitle.textContent = 'Hazır temizlenmeye.';
-    el.heroLead.textContent = 'Aşağıdaki kategorilerden istediğinizi seçin. Tüm değişiklikler onayınızdan sonra uygulanır.';
+    el.heroTitle.textContent = 'Ready to clean.';
+    el.heroLead.textContent = 'Select any of the categories below. All changes are applied only after your confirmation.';
 
     // Big number with count-up
     el.heroNumber.hidden = false;
@@ -552,63 +556,63 @@
   // Explains what each cache is and how it comes back, so the user knows
   // exactly what they are deleting. Inspired by npkill/ClearDisk.
   const CACHE_DESCRIPTIONS = {
-    derived_data: 'Xcode derleme ürünleri ve indeksleri. Proje açılınca otomatik yeniden oluşur.',
-    broken_links: 'Hedefi silinmiş sembolik bağlantılar. Güvenle kaldırılabilir.',
-    brew_cache: 'İndirilmiş Homebrew şişe/paket dosyaları. brew install ile tekrar iner.',
-    docker_prune: 'Docker imajları, kapsayıcıları ve volume\'ları. Çalışan kapsayıcı verisi kaybolabilir!',
-    npm_cache: 'npmjs.org\'dan indirilen paket arşivleri. npm install ile tekrar iner.',
-    pip_cache: 'İndirilmiş Python wheel/sdist dosyaları. pip install ile tekrar iner.',
-    device_support: 'Bağlı iPhone/iPad hata ayıklama sembolleri. Cihaz bağlanınca tekrar iner.',
-    coresim_caches: 'CoreSimulator dyld ve framework önbellekleri. Otomatik yeniden oluşur.',
-    xcode_archives: 'App Store/dağıtım için arşivlenmiş derlemeler. Xcode\'dan tekrar arşivlenir.',
-    cocoapods_cache: 'İndirilmiş pod spec ve kaynakları. pod install ile tekrar iner.',
-    pnpm_cache: 'İçerik adresli pnpm paket deposu. pnpm install ile tekrar iner.',
-    yarn_cache: 'Önbelleğe alınmış Yarn paketleri. yarn install ile tekrar iner.',
-    gradle_cache: 'İndirilmiş JAR\'lar ve derleme çıktıları. gradle build ile tekrar iner.',
-    maven_repo: 'Yerel Maven deposu (.m2). mvn build ile tekrar iner.',
-    simctl_unavailable: 'Kullanılamayan (eski iOS) simülatörleri siler. Yer açar.',
-    xcode_products: 'Xcode ürün derleme çıktıları. Sonraki derlemede yeniden oluşur.',
-    simulator_logs: 'Simülatör çökme raporları ve günlükleri. İstediğiniz zaman silinebilir.',
-    simulator_devices: 'Simülatörleri fabrika durumuna sıfırlar (yüklü uygulama/veri). Cihaz kaydı korunur.',
-    font_caches: 'Sistem yazı tipi önbelleği. Otomatik yeniden oluşur.',
-    brew_cleanup: 'brew cleanup -s çalıştırır: eski sürümleri ve önbelleği temizler.',
-    swift_pm_cache: 'İndirilmiş Swift paketleri. swift build ile tekrar iner.',
-    xcode_logs: 'DerivedData içindeki Xcode derleme günlükleri. Güvenle silinir.',
-    xcode_previews: 'SwiftUI önizleme simülatör verisi. Sonraki önizlemede yeniden oluşur.',
-    carthage_cache: 'Carthage bağımlılık önbelleği. carthage update ile tekrar iner.',
-    bun_cache: 'Önbelleğe alınmış Bun paketleri. bun install ile tekrar iner.',
-    deno_cache: 'Önbelleğe alınmış Deno modülleri. deno run ile tekrar iner.',
-    conda_pkgs: 'Önbelleğe alınmış Conda paketleri. conda install ile tekrar iner.',
-    uv_cache: 'uv (hızlı pip) paket önbelleği. uv pip install ile tekrar iner.',
-    poetry_cache: 'Önbelleğe alınmış Poetry bağımlılıkları. poetry install ile tekrar iner.',
-    go_modules: 'Go modül indirme önbelleği. go mod download ile tekrar iner.',
-    cargo_registry: 'Önbelleğe alınmış Rust crate kaynakları. cargo build ile tekrar iner.',
-    composer_cache: 'Önbelleğe alınmış PHP paketleri. composer install ile tekrar iner.',
-    gradle_wrapper: 'Gradle wrapper dağıtım ikilileri. Sonraki gradle build ile tekrar iner.',
-    sbt_ivy_cache: 'sbt/Ivy ile önbelleğe alınmış Scala/Java bağımlılıkları. Tekrar iner.',
-    bazel_cache: 'Bazel derleme ve repo önbellekleri. Sonraki bazel build ile yeniden oluşur.',
-    flutter_pub_cache: 'Önbelleğe alınmış Dart/Flutter paketleri. flutter pub get ile tekrar iner.',
-    jetbrains_cache: 'JetBrains IDE önbellekleri (IntelliJ, WebStorm vb.). IDE yeniden başlayınca oluşur.',
-    playwright_cache: 'Playwright test tarayıcı ikilileri. npx playwright install ile tekrar iner.',
-    puppeteer_cache: 'Puppeteer için indirilen Chromium ikilileri. Tekrar iner.',
-    prisma_cache: 'Prisma ORM sorgu motoru ikilileri. npx prisma generate ile tekrar iner.',
-    huggingface_cache: 'İndirilmiş AI/ML modelleri ve veri kümeleri. Tekrar iner (büyük olabilir).',
+    derived_data: 'Xcode build products and indexes. Rebuilt automatically when you open the project.',
+    broken_links: 'Symbolic links whose target was deleted. Safe to remove.',
+    brew_cache: 'Downloaded Homebrew bottle/package files. Re-downloaded with brew install.',
+    docker_prune: 'Docker images, containers and volumes. Running container data may be lost!',
+    npm_cache: 'Package archives downloaded from npmjs.org. Re-downloaded with npm install.',
+    pip_cache: 'Downloaded Python wheel/sdist files. Re-downloaded with pip install.',
+    device_support: 'Debug symbols for connected iPhone/iPad. Re-downloaded when the device connects.',
+    coresim_caches: 'CoreSimulator dyld and framework caches. Rebuilt automatically.',
+    xcode_archives: 'Builds archived for App Store/distribution. Re-archived from Xcode.',
+    cocoapods_cache: 'Downloaded pod specs and sources. Re-downloaded with pod install.',
+    pnpm_cache: 'Content-addressed pnpm package store. Re-downloaded with pnpm install.',
+    yarn_cache: 'Cached Yarn packages. Re-downloaded with yarn install.',
+    gradle_cache: 'Downloaded JARs and build outputs. Re-downloaded with gradle build.',
+    maven_repo: 'Local Maven repository (.m2). Re-downloaded with mvn build.',
+    simctl_unavailable: 'Removes unavailable (old iOS) simulators. Frees space.',
+    xcode_products: 'Xcode product build outputs. Rebuilt on the next build.',
+    simulator_logs: 'Simulator crash reports and logs. Can be deleted any time.',
+    simulator_devices: 'Resets simulators to factory state (installed apps/data). Device registration kept.',
+    font_caches: 'System font cache. Rebuilt automatically.',
+    brew_cleanup: 'Runs brew cleanup -s: removes old versions and the cache.',
+    swift_pm_cache: 'Downloaded Swift packages. Re-downloaded with swift build.',
+    xcode_logs: 'Xcode build logs inside DerivedData. Safe to delete.',
+    xcode_previews: 'SwiftUI preview simulator data. Rebuilt on the next preview.',
+    carthage_cache: 'Carthage dependency cache. Re-downloaded with carthage update.',
+    bun_cache: 'Cached Bun packages. Re-downloaded with bun install.',
+    deno_cache: 'Cached Deno modules. Re-downloaded with deno run.',
+    conda_pkgs: 'Cached Conda packages. Re-downloaded with conda install.',
+    uv_cache: 'uv (fast pip) package cache. Re-downloaded with uv pip install.',
+    poetry_cache: 'Cached Poetry dependencies. Re-downloaded with poetry install.',
+    go_modules: 'Go module download cache. Re-downloaded with go mod download.',
+    cargo_registry: 'Cached Rust crate sources. Re-downloaded with cargo build.',
+    composer_cache: 'Cached PHP packages. Re-downloaded with composer install.',
+    gradle_wrapper: 'Gradle wrapper distribution binaries. Re-downloaded on the next gradle build.',
+    sbt_ivy_cache: 'Scala/Java dependencies cached by sbt/Ivy. Re-downloaded.',
+    bazel_cache: 'Bazel build and repo caches. Rebuilt on the next bazel build.',
+    flutter_pub_cache: 'Cached Dart/Flutter packages. Re-downloaded with flutter pub get.',
+    jetbrains_cache: 'JetBrains IDE caches (IntelliJ, WebStorm, etc.). Rebuilt when the IDE restarts.',
+    playwright_cache: 'Playwright test browser binaries. Re-downloaded with npx playwright install.',
+    puppeteer_cache: 'Chromium binaries downloaded for Puppeteer. Re-downloaded.',
+    prisma_cache: 'Prisma ORM query engine binaries. Re-downloaded with npx prisma generate.',
+    huggingface_cache: 'Downloaded AI/ML models and datasets. Re-downloaded (can be large).',
   };
 
   // Age-based suggestion for a cache sub-item, based on how long since it was
-  // last touched and how big it is. Mirrors ClearDisk's heuristic, in Turkish.
+  // last touched and how big it is. Mirrors ClearDisk's heuristic.
   function suggestionFor(sub) {
     const days = sub.age_days;
     if (days == null) return '';
     const gb = (sub.size_bytes || 0) / (1024 * 1024 * 1024);
     if (days > 90 && gb >= 1) {
-      return `⚠️ ${days} gündür kullanılmadı, ${sub.size_human} — güvenle temizlenebilir`;
+      return `⚠️ Unused for ${days} days, ${sub.size_human} — safe to clean`;
     }
     if (days > 60) {
-      return `💡 ${days} gündür kullanılmıyor — temizlemeyi düşünün`;
+      return `💡 Unused for ${days} days — consider cleaning`;
     }
     if (days > 30 && gb >= 5) {
-      return `💡 ${days} gün önce, ${sub.size_human} ile büyük`;
+      return `💡 ${days} days ago, large at ${sub.size_human}`;
     }
     return '';
   }
@@ -635,17 +639,17 @@
       let badge = '';
       if (key === 'app_leftovers') {
         const cls = sub.is_orphaned ? 'orphaned' : 'installed';
-        const label = sub.is_orphaned ? 'kalıntı' : 'yüklü';
+        const label = sub.is_orphaned ? 'leftover' : 'installed';
         badge = `<span class="subitem-badge ${cls}">${label}</span>`;
       } else if (key === 'ios_backups') {
-        badge = `<span class="subitem-badge orphaned">yedek</span>`;
+        badge = `<span class="subitem-badge orphaned">backup</span>`;
       } else if (key === 'app_uninstaller') {
-        badge = `<span class="subitem-badge orphaned">uygulama</span>`;
+        badge = `<span class="subitem-badge orphaned">app</span>`;
       } else if (key === 'project_artifacts') {
         const cls = sub.is_orphaned ? 'orphaned' : 'installed';
-        const typeLabel = sub.type || 'proje';
+        const typeLabel = sub.type || 'project';
         const ageLabel = sub.is_orphaned && sub.days_since != null
-          ? ` · ${sub.days_since}g` : '';
+          ? ` · ${sub.days_since}d` : '';
         badge = `<span class="subitem-badge ${cls}">${escapeHtml(typeLabel)}${ageLabel}</span>`;
       }
 
@@ -699,15 +703,15 @@
     if (isLoading) return;
     const selected = getSelectedIndices();
     if (selected.length === 0) {
-      termLog('Lütfen en az bir kategori seçin.', 'error');
+      termLog('Please select at least one category.', 'error');
       return;
     }
     const names = selected.map((idx) => CAT_BY_KEY[KEY_BY_INDEX[idx]]?.name || `#${idx}`);
     const confirmed = confirm(
-      `Şu kategoriler temizlenecek:\n\n${names.map((n) => `• ${n}`).join('\n')}\n\nDevam etmek istiyor musunuz?`
+      `These categories will be cleaned:\n\n${names.map((n) => `• ${n}`).join('\n')}\n\nDo you want to continue?`
     );
     if (!confirmed) {
-      termLog('Temizlik iptal edildi.', 'info');
+      termLog('Cleanup cancelled.', 'info');
       return;
     }
 
@@ -717,10 +721,10 @@
     if (dangerSelected.length > 0) {
       const dnames = dangerSelected.map((k) => CAT_BY_KEY[k]?.name || k).join(', ');
       const dangerOk = confirm(
-        `RİSKLİ kategoriler seçildi (${dnames}). Bu veriler kalıcı olarak silinir ve geri alınamaz. Devam edilsin mi?`
+        `RISKY categories selected (${dnames}). This data is permanently deleted and cannot be recovered. Continue?`
       );
       if (!dangerOk) {
-        termLog('Riskli kategoriler onaylanmadı, temizlik iptal edildi.', 'info');
+        termLog('Risky categories not confirmed, cleanup cancelled.', 'info');
         return;
       }
     }
@@ -730,8 +734,8 @@
     setLoading(el.btnScan, true);
     el.resultsPanel.hidden = true;
     el.hero.setAttribute('data-state', 'cleaning');
-    el.heroEyebrow.textContent = 'Temizlik yapılıyor…';
-    termLog(`Temizlik başlatılıyor (${selected.length} kategori)…`, 'info');
+    el.heroEyebrow.textContent = 'Cleaning…';
+    termLog(`Starting cleanup (${selected.length} categories)…`, 'info');
 
     try {
       const dryRun = !!(el.dryRunToggle && el.dryRunToggle.checked);
@@ -755,17 +759,17 @@
       window.AppAnim?.pop?.(el.resultsPanel);
       window.AppAnim?.bindResultsDrag?.();
       el.resultsTitle.textContent = data.dry_run
-        ? 'Önizleme (hiçbir şey silinmedi)'
-        : 'Temizlik tamamlandı';
+        ? 'Preview (nothing was deleted)'
+        : 'Cleanup complete';
       // In dry-run the disk delta is 0, so show the estimate as the headline.
       const freedText = data.dry_run
         ? (data.estimated_human || formatBytes(data.estimated_bytes || 0))
         : (data.freed_human || formatBytes(data.freed_bytes || 0));
       el.resultsFreed.textContent = freedText;
-      const subParts = [`${data.items_cleaned || selected.length} kategori`,
-                        `Yeni boş alan ${data.disk_free || '—'}`];
+      const subParts = [`${data.items_cleaned || selected.length} categories`,
+                        `New free space ${data.disk_free || '—'}`];
       if (data.estimated_human && data.freed_source === 'df') {
-        subParts.push(`Tahmini taranan: ${data.estimated_human}`);
+        subParts.push(`Estimated scanned: ${data.estimated_human}`);
       }
       el.resultsSub.textContent = subParts.join(' · ');
       if (data.disk_free) el.sysDiskFree.textContent = data.disk_free;
@@ -780,9 +784,9 @@
         termLog(`  ✓ ${name}: ${d.freed}`, 'success');
       });
 
-      (data.errors || []).forEach((e) => termLog(`  ✗ Hata: ${e}`, 'error'));
+      (data.errors || []).forEach((e) => termLog(`  ✗ Error: ${e}`, 'error'));
 
-      termLog(`Toplam ${freedText} alan kazanıldı.`, 'success');
+      termLog(`Reclaimed ${freedText} in total.`, 'success');
 
       // Reset categories' bars
       $$('.cat-bar-fill').forEach((b) => { b.style.width = '0%'; b.classList.remove('size-lg', 'size-xl'); });
@@ -791,21 +795,21 @@
       scanData = null;
 
       el.hero.setAttribute('data-state', 'idle');
-      el.heroEyebrow.textContent = 'Temizlik tamamlandı · Tekrar tarayın';
+      el.heroEyebrow.textContent = 'Cleanup complete · Scan again';
       el.heroNumber.hidden = true;
       el.heroBar.hidden = true;
-      el.heroTitle.textContent = "Mac'iniz daha hızlı.";
-      el.heroLead.textContent = 'Yeniden tarayarak daha fazla temizlenebilir dosya keşfedin.';
+      el.heroTitle.textContent = 'Your Mac is faster.';
+      el.heroLead.textContent = 'Scan again to discover more cleanable files.';
     } catch (err) {
-      termLog(`Temizlik hatası: ${err.message}`, 'error');
+      termLog(`Cleanup error: ${err.message}`, 'error');
       el.resultsPanel.hidden = false;
       el.resultsPanel.classList.add('error');
-      el.resultsTitle.textContent = 'Hata oluştu';
+      el.resultsTitle.textContent = 'An error occurred';
       el.resultsFreed.textContent = '';
       el.resultsSub.textContent = err.message;
       el.resultsChips.innerHTML = '';
       el.hero.setAttribute('data-state', 'idle');
-      el.heroEyebrow.textContent = 'Hata · Temizlik tamamlanamadı';
+      el.heroEyebrow.textContent = 'Error · Cleanup could not finish';
     } finally {
       setLoading(el.btnClean, false);
       setLoading(el.btnScan, false);
@@ -824,14 +828,14 @@
   async function handleSpotlight() {
     if (el.btnSpotlight.disabled) return;
     setLoading(el.btnSpotlight, true);
-    termLog('Spotlight dizini sıfırlanıyor (Videodaki Siri & Spotlight Simülasyonu)…', 'info');
+    termLog('Rebuilding Spotlight index…', 'info');
     try {
       const data = await apiFetch('/api/spotlight-reindex', { method: 'POST', body: '{}' });
       if (data.success) {
-        termLog('✓ Spotlight dizini arka planda başarıyla sıfırlandı ve yeniden oluşturuluyor.', 'success');
+        termLog('✓ Spotlight index reset successfully and is rebuilding in the background.', 'success');
       }
     } catch (err) {
-      termLog(`✗ Spotlight Sıfırlama Hatası: ${err.message}`, 'error');
+      termLog(`✗ Spotlight rebuild error: ${err.message}`, 'error');
     } finally {
       setLoading(el.btnSpotlight, false);
     }
@@ -843,12 +847,12 @@
   async function handleFlushDns() {
     if (el.btnFlushDns.disabled) return;
     setLoading(el.btnFlushDns, true);
-    termLog('DNS önbelleği temizleniyor…', 'info');
+    termLog('Flushing DNS cache…', 'info');
     try {
       const data = await apiFetch('/api/flush-dns', { method: 'POST', body: '{}' });
-      termLog(data.message || 'DNS önbelleği temizlendi.', 'success');
+      termLog(data.message || 'DNS cache flushed.', 'success');
     } catch (err) {
-      termLog(`DNS hatası: ${err.message}`, 'error');
+      termLog(`DNS error: ${err.message}`, 'error');
     } finally {
       setLoading(el.btnFlushDns, false);
     }
@@ -857,12 +861,12 @@
   async function handlePurgeRam() {
     if (el.btnPurgeRam.disabled) return;
     setLoading(el.btnPurgeRam, true);
-    termLog('RAM önbelleği boşaltılıyor…', 'info');
+    termLog('Purging inactive RAM…', 'info');
     try {
       const data = await apiFetch('/api/purge-ram', { method: 'POST', body: '{}' });
-      termLog(data.message || 'RAM önbelleği boşaltıldı.', 'success');
+      termLog(data.message || 'Inactive RAM purged.', 'success');
     } catch (err) {
-      termLog(`RAM hatası: ${err.message}`, 'error');
+      termLog(`RAM error: ${err.message}`, 'error');
     } finally {
       setLoading(el.btnPurgeRam, false);
     }
@@ -871,12 +875,12 @@
   async function handleLaunchAgents() {
     if (el.btnLaunchAgents.disabled) return;
     setLoading(el.btnLaunchAgents, true);
-    termLog('Bozuk LaunchAgents temizleniyor…', 'info');
+    termLog('Cleaning broken LaunchAgents…', 'info');
     try {
       const data = await apiFetch('/api/launchagents-clean', { method: 'POST', body: '{}' });
-      termLog(`LaunchAgents temizlendi. ${data.removed ?? 0} dosya kaldırıldı.`, 'success');
+      termLog(`LaunchAgents cleaned. ${data.removed ?? 0} files removed.`, 'success');
     } catch (err) {
-      termLog(`LaunchAgents hatası: ${err.message}`, 'error');
+      termLog(`LaunchAgents error: ${err.message}`, 'error');
     } finally {
       setLoading(el.btnLaunchAgents, false);
     }
@@ -885,13 +889,13 @@
   async function handleThinSnapshots() {
     if (el.btnThinSnapshots.disabled) return;
     setLoading(el.btnThinSnapshots, true);
-    termLog('Yerel snapshotlar inceltiliyor…', 'info');
+    termLog('Thinning local snapshots…', 'info');
     try {
       const data = await apiFetch('/api/thin-snapshots', { method: 'POST', body: '{}' });
-      termLog(`Snapshot: ${data.snapshots_before} → ${data.snapshots_after} · Boş alan ${data.disk_free || '—'}`, 'success');
+      termLog(`Snapshots: ${data.snapshots_before} → ${data.snapshots_after} · Free space ${data.disk_free || '—'}`, 'success');
       if (data.disk_free) el.sysDiskFree.textContent = data.disk_free;
     } catch (err) {
-      termLog(`Snapshot hatası: ${err.message}`, 'error');
+      termLog(`Snapshot error: ${err.message}`, 'error');
     } finally {
       setLoading(el.btnThinSnapshots, false);
     }
@@ -953,7 +957,7 @@
       </div>
       <div class="tweaks-row">
         <span>Tema</span>
-        <button class="chip-btn" id="tweaksTheme">Değiştir</button>
+        <button class="chip-btn" id="tweaksTheme">Change</button>
       </div>
     `;
     document.body.appendChild(panel);
@@ -1012,6 +1016,7 @@
 
   // GSAP entrance + scroll reveals + draggable panels (no-ops without GSAP).
   window.AppAnim?.intro?.();
+  window.AppAnim?.blobs?.();
   window.AppAnim?.revealCards?.();
   window.AppAnim?.setupDraggable?.();
 
@@ -1022,7 +1027,7 @@
       card.classList.add('selected');
       $$('.subitems input[type="checkbox"]', card).forEach((s) => (s.checked = true));
     });
-    termLog('Tüm kategoriler seçildi.', 'info');
+    termLog('All categories selected.', 'info');
   });
 
   el.btnSelectNone.addEventListener('click', () => {
@@ -1032,7 +1037,7 @@
       card.classList.remove('selected');
       $$('.subitems input[type="checkbox"]', card).forEach((s) => (s.checked = false));
     });
-    termLog('Tüm seçimler kaldırıldı.', 'info');
+    termLog('All selections cleared.', 'info');
   });
 
   /* ──────────────────────────────────────────────────────────
@@ -1069,7 +1074,7 @@
   tabFiles.addEventListener('click', () => showTab('files'));
 
   /* ──────────────────────────────────────────────────────────
-     Dosyalar (cleanable files) tab
+     Files (cleanable files) tab
      ────────────────────────────────────────────────────────── */
   const filesSearch = $('#filesSearch');
   const filesSort = $('#filesSort');
@@ -1098,20 +1103,20 @@
     if (!scanData || !scanData.scan) {
       filesList.innerHTML = '';
       filesEmpty.hidden = false;
-      filesCountEl.textContent = 'Önce tarama yapın';
+      filesCountEl.textContent = 'Scan first';
       updateFilesTotal();
       return;
     }
     const rows = currentFileRows();
     filesEmpty.hidden = rows.length > 0;
-    filesCountEl.textContent = `${rows.length} dosya`;
+    filesCountEl.textContent = `${rows.length} files`;
     filesList.innerHTML = '';
-    const badgeLabel = { danger: 'riskli', caution: 'dikkat', safe: 'güvenli' };
+    const badgeLabel = { danger: 'risky', caution: 'caution', safe: 'safe' };
     rows.forEach((r) => {
       const li = document.createElement('li');
       li.className = 'file-row';
       const checked = filesSelected.has(r.rowId) ? 'checked' : '';
-      const ageStr = r.ageDays != null ? ` · ${r.ageDays}g` : '';
+      const ageStr = r.ageDays != null ? ` · ${r.ageDays}d` : '';
       const pathStr = r.path ? ' · ' + escapeHtml(r.path) : '';
       li.innerHTML = `
         <input type="checkbox" data-row-id="${escapeAttr(r.rowId)}" ${checked}>
@@ -1156,17 +1161,17 @@
 
     const dangerRows = rows.filter((r) => r.safety === 'danger');
     const confirmed = confirm(
-      `${rows.length} öğe temizlenecek (${filesSelectedTotalEl.textContent}). Devam edilsin mi?`);
-    if (!confirmed) { termLog('Temizlik iptal edildi.', 'info'); return; }
+      `${rows.length} items will be cleaned (${filesSelectedTotalEl.textContent}). Continue?`);
+    if (!confirmed) { termLog('Cleanup cancelled.', 'info'); return; }
     if (dangerRows.length > 0) {
       const ok = confirm(
-        `RİSKLİ öğeler seçildi (${dangerRows.length}). Bu veriler kalıcı olarak silinir ve geri alınamaz. Devam edilsin mi?`);
-      if (!ok) { termLog('Riskli öğeler onaylanmadı, temizlik iptal edildi.', 'info'); return; }
+        `RISKY items selected (${dangerRows.length}). This data is permanently deleted and cannot be recovered. Continue?`);
+      if (!ok) { termLog('Risky items not confirmed, cleanup cancelled.', 'info'); return; }
     }
 
     isLoading = true;
     setLoading(btnCleanSelected, true);
-    termLog(`Seçilen dosyalar temizleniyor (${rows.length})…`, 'info');
+    termLog(`Cleaning selected files (${rows.length})…`, 'info');
     try {
       const dryRun = !!(el.dryRunToggle && el.dryRunToggle.checked);
       const payload = window.ScanUtil.buildCleanPayload(rows, INDEX_BY_KEY);
@@ -1177,16 +1182,16 @@
       el.resultsPanel.hidden = false;
       el.resultsPanel.classList.remove('error');
       el.resultsTitle.textContent = data.dry_run
-        ? 'Önizleme (hiçbir şey silinmedi)' : 'Temizlik tamamlandı';
+        ? 'Preview (nothing was deleted)' : 'Cleanup complete';
       el.resultsFreed.textContent = data.dry_run
         ? (data.estimated_human || formatBytes(data.estimated_bytes || 0))
         : (data.freed_human || formatBytes(data.freed_bytes || 0));
       if (data.disk_free) el.sysDiskFree.textContent = data.disk_free;
-      termLog(`Temizlik tamamlandı — ${el.resultsFreed.textContent}`, 'success');
+      termLog(`Cleanup complete — ${el.resultsFreed.textContent}`, 'success');
       if (!data.dry_run) filesSelected.clear();
       renderFileList();
     } catch (err) {
-      termLog(`Temizlik hatası: ${err.message}`, 'error');
+      termLog(`Cleanup error: ${err.message}`, 'error');
     } finally {
       setLoading(btnCleanSelected, false);
       isLoading = false;
@@ -1204,35 +1209,35 @@
   async function loadApplications() {
     const appsCount = $('#appsCount');
     const appsList = $('#appsList');
-    if (appsCount) appsCount.textContent = 'Taranıyor...';
-    if (appsList) appsList.innerHTML = '<li class="apps-loading"><span class="spinner"></span>Uygulamalar listeleniyor...</li>';
+    if (appsCount) appsCount.textContent = 'Scanning…';
+    if (appsList) appsList.innerHTML = '<li class="apps-loading"><span class="spinner"></span>Listing applications…</li>';
 
-    termLog('Yüklü uygulamalar taranıyor…', 'info');
+    termLog('Scanning installed applications…', 'info');
 
     try {
       const data = await apiFetch('/api/apps');
       if (data && data.success) {
         allApplications = data.apps || [];
         renderApplications(allApplications);
-        termLog(`Uygulama taraması tamamlandı. ${allApplications.length} uygulama bulundu.`, 'success');
+        termLog(`App scan complete. ${allApplications.length} applications found.`, 'success');
       } else {
-        throw new Error(data?.error || 'Uygulamalar alınamadı.');
+        throw new Error(data?.error || 'Could not load applications.');
       }
     } catch (err) {
-      termLog(`Uygulama tarama hatası: ${err.message}`, 'error');
-      if (appsList) appsList.innerHTML = `<li class="apps-error">Hata: ${err.message}</li>`;
-      if (appsCount) appsCount.textContent = 'Hata';
+      termLog(`App scan error: ${err.message}`, 'error');
+      if (appsList) appsList.innerHTML = `<li class="apps-error">Error: ${err.message}</li>`;
+      if (appsCount) appsCount.textContent = 'Error';
     }
   }
 
   function renderApplications(apps, skipReveal) {
     const appsCount = $('#appsCount');
     const appsList = $('#appsList');
-    if (appsCount) appsCount.textContent = `${apps.length} uygulama`;
+    if (appsCount) appsCount.textContent = `${apps.length} applications`;
     if (!appsList) return;
 
     if (apps.length === 0) {
-      appsList.innerHTML = '<li class="apps-empty">Uygulama bulunamadı.</li>';
+      appsList.innerHTML = '<li class="apps-empty">No applications found.</li>';
       return;
     }
 
@@ -1274,7 +1279,7 @@
           <span class="app-size-val">${escapeHtml(app.size_human)}</span>
           <button class="btn btn-danger btn-sm btn-uninstall" type="button" data-id="${escapeAttr(app.id)}" data-source="${escapeAttr(app.source)}" data-name="${escapeAttr(app.name)}" data-folder-name="${escapeAttr(app.folder_name)}">
             <span class="spinner" aria-hidden="true"></span>
-            <span class="btn-text">Kaldır</span>
+            <span class="btn-text">Uninstall</span>
           </button>
         </div>
       `;
@@ -1323,11 +1328,11 @@
   }
 
   async function handleAppUninstall(btn, id, source, name, folderName) {
-    const confirmed = confirm(`"${name}" uygulamasını ve ilişkili tüm dosyalarını kaldırmak istediğinize emin misiniz?`);
+    const confirmed = confirm(`Are you sure you want to uninstall "${name}" and all its associated files?`);
     if (!confirmed) return;
 
     setLoading(btn, true);
-    termLog(`"${name}" kaldırılıyor…`, 'info');
+    termLog(`Uninstalling "${name}"…`, 'info');
 
     try {
       const data = await apiFetch('/api/uninstall', {
@@ -1336,9 +1341,9 @@
       });
 
       if (data && data.success) {
-        termLog(`✓ "${name}" başarıyla kaldırıldı.`, 'success');
+        termLog(`✓ "${name}" uninstalled successfully.`, 'success');
         if (data.details) {
-          termLog(`  Detaylar: ${data.details}`, 'success');
+          termLog(`  Details: ${data.details}`, 'success');
         }
         const li = btn.closest('.app-item');
         if (li) {
@@ -1349,20 +1354,20 @@
             li.remove();
             allApplications = allApplications.filter((a) => a.id !== id);
             const appsCount = $('#appsCount');
-            if (appsCount) appsCount.textContent = `${allApplications.length} uygulama`;
+            if (appsCount) appsCount.textContent = `${allApplications.length} applications`;
           }, 350);
         }
       } else {
-        throw new Error(data?.error || 'Kaldırma başarısız oldu.');
+        throw new Error(data?.error || 'Uninstall failed.');
       }
     } catch (err) {
-      termLog(`✗ "${name}" kaldırılırken hata oluştu: ${err.message}`, 'error');
-      alert(`Hata: ${err.message}`);
+      termLog(`✗ Error uninstalling "${name}": ${err.message}`, 'error');
+      alert(`Error: ${err.message}`);
     } finally {
       setLoading(btn, false);
     }
   }
 
-  termLog('Apple Cleanup başlatıldı.', 'success');
+  termLog('Apple Cleanup started.', 'success');
   fetchStatus();
 })();

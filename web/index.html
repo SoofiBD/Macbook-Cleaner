@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="tr" data-theme="light">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="description" content="Apple Cleanup — macOS sisteminizi hızlı ve güvenli bir şekilde temizleyin." />
+  <meta name="description" content="Apple Cleanup — clean your macOS system quickly and safely." />
   <meta name="theme-color" content="#fbfbfc" />
   <meta name="cleanup-token" content="__CLEANUP_TOKEN__" />
   <title>Apple Cleanup</title>
@@ -128,55 +128,62 @@
   </svg>
 
   <div class="app">
+    <!-- ── Glass background blobs (GSAP-animated) ──────────────── -->
+    <div class="bg-blobs" aria-hidden="true">
+      <span class="blob blob-a"></span>
+      <span class="blob blob-b"></span>
+      <span class="blob blob-c"></span>
+    </div>
+
     <!-- ═══ Top bar ═══ -->
     <header class="topbar" role="banner">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true"><svg class="ic"><use href="#i-logo"/></svg></span>
         <div class="brand-text">
           <span class="brand-name">Apple Cleanup</span>
-          <span class="brand-sub">macOS bakım aracı</span>
+          <span class="brand-sub">macOS maintenance</span>
         </div>
       </div>
 
-      <div class="sysbar" role="status" aria-label="Sistem">
+      <div class="sysbar" role="status" aria-label="System">
         <div class="sys-chip">
           <span class="sys-k">macOS</span>
           <span class="sys-v loading" id="sysVersion">—</span>
         </div>
         <div class="sys-chip">
-          <span class="sys-k">Kullanıcı</span>
+          <span class="sys-k">User</span>
           <span class="sys-v loading" id="sysUser">—</span>
         </div>
         <div class="sys-chip sys-chip-disk">
-          <span class="sys-k">Boş Alan</span>
+          <span class="sys-k">Free</span>
           <span class="sys-v loading" id="sysDiskFree">—</span>
           <span class="sys-disk-bar"><span class="sys-disk-fill" id="diskBarFill"></span></span>
         </div>
         <div class="sys-chip sys-chip-forecast" id="forecastChip" hidden>
-          <span class="sys-k">Tahmin</span>
+          <span class="sys-k">Forecast</span>
           <span class="sys-v" id="sysForecast">—</span>
         </div>
       </div>
 
-      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Tema değiştir">
+      <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle theme">
         <svg class="ic ic-sun"><use href="#i-sun"/></svg>
         <svg class="ic ic-moon"><use href="#i-moon"/></svg>
       </button>
     </header>
 
     <!-- ═══ Navigation Tabs ═══ -->
-    <nav class="nav-tabs" role="tablist" aria-label="Ana Menü">
+    <nav class="nav-tabs" role="tablist" aria-label="Main menu">
       <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="cleanupTabContent" id="tab-cleanup" type="button">
         <svg class="ic"><use href="#i-sparkle"/></svg>
-        <span>Temizlik</span>
+        <span>Cleanup</span>
       </button>
       <button class="tab-btn" role="tab" aria-selected="false" aria-controls="uninstallerTabContent" id="tab-uninstaller" type="button">
         <svg class="ic"><use href="#i-uninstall"/></svg>
-        <span>Uygulama Kaldırıcı</span>
+        <span>App Uninstaller</span>
       </button>
       <button class="tab-btn" role="tab" aria-selected="false" aria-controls="filesTabContent" id="tab-files" type="button">
         <svg class="ic"><use href="#i-leftover"/></svg>
-        <span>Dosyalar</span>
+        <span>Files</span>
       </button>
     </nav>
 
@@ -184,23 +191,23 @@
     <div id="cleanupTabContent">
       <section class="hero" id="hero" data-state="idle">
       <div class="hero-left">
-        <div class="hero-eyebrow" id="heroEyebrow">Durum · Henüz tarama yapılmadı</div>
-        <h1 class="hero-title" id="heroTitle">Mac'inizi temizleyin.</h1>
+        <div class="hero-eyebrow" id="heroEyebrow">Status · No scan yet</div>
+        <h1 class="hero-title" id="heroTitle">Reclaim your Mac's space.</h1>
         <p class="hero-lead" id="heroLead">
-          Cache, log, geçici dosya ve uygulama kalıntılarını tarayın.
-          Hiçbir şey siz onaylamadan silinmez.
+          Scan caches, logs, temporary files and app leftovers.
+          Nothing is removed until you confirm.
         </p>
 
         <!-- Idle / Scanned big number -->
         <div class="hero-number" id="heroNumber" hidden>
           <span class="hn-value" id="hnValue">0</span>
           <span class="hn-unit" id="hnUnit">GB</span>
-          <span class="hn-tag">temizlenebilir</span>
+          <span class="hn-tag">selected to clean</span>
         </div>
 
         <!-- Stacked bar (post-scan) -->
         <div class="hero-bar" id="heroBar" hidden>
-          <div class="hero-bar-track" id="heroBarTrack" aria-label="Kategori dağılımı"></div>
+          <div class="hero-bar-track" id="heroBarTrack" aria-label="Category breakdown"></div>
           <div class="hero-bar-legend" id="heroBarLegend"></div>
         </div>
 
@@ -208,18 +215,18 @@
           <button class="btn btn-primary" id="btnScan" type="button">
             <span class="spinner" aria-hidden="true"></span>
             <svg class="ic"><use href="#i-search"/></svg>
-            <span class="btn-text">Tara</span>
+            <span class="btn-text">Scan</span>
             <span class="btn-kbd" aria-hidden="true">⌘S</span>
           </button>
           <button class="btn btn-accent" id="btnClean" type="button" disabled>
             <span class="spinner" aria-hidden="true"></span>
             <svg class="ic"><use href="#i-sparkle"/></svg>
-            <span class="btn-text">Temizle</span>
+            <span class="btn-text">Clean</span>
             <span class="btn-kbd" aria-hidden="true">⌘⏎</span>
           </button>
-          <label class="dryrun-toggle" title="Hiçbir şey silmeden ne kadar yer açılacağını önizle">
+          <label class="dryrun-toggle" title="Preview how much space can be freed without deleting anything">
             <input type="checkbox" id="dryRunToggle" />
-            <span>Önizleme (silme yok)</span>
+            <span>Preview (no deletion)</span>
           </label>
         </div>
       </div>
@@ -227,11 +234,17 @@
       <!-- Right: animated disk donut -->
       <div class="hero-right" aria-hidden="true">
         <svg class="donut" viewBox="0 0 200 200">
+          <defs>
+            <linearGradient id="donutGrad" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0" stop-color="var(--accent-2)"/>
+              <stop offset="1" stop-color="var(--accent)"/>
+            </linearGradient>
+          </defs>
           <circle class="donut-track" cx="100" cy="100" r="78" fill="none" stroke-width="14"/>
           <circle class="donut-fill" id="donutFill" cx="100" cy="100" r="78" fill="none" stroke-width="14" stroke-linecap="round" pathLength="100" stroke-dasharray="0 100" transform="rotate(-90 100 100)"/>
           <g class="donut-label">
             <text x="100" y="92" class="donut-num" id="donutNum" text-anchor="middle">—</text>
-            <text x="100" y="115" class="donut-cap" text-anchor="middle">disk kullanımı</text>
+            <text x="100" y="115" class="donut-cap" text-anchor="middle">disk used</text>
           </g>
         </svg>
       </div>
@@ -241,15 +254,15 @@
     <section class="section">
       <div class="section-head">
         <div class="section-titleblock">
-          <h2 class="section-title">Kategoriler</h2>
-          <span class="section-sub" id="categoryCount">10 kategori</span>
+          <h2 class="section-title">Categories</h2>
+          <span class="section-sub" id="categoryCount">10 categories</span>
         </div>
         <div class="section-tools">
           <button class="chip-btn" id="btnSelectAll" type="button">
-            <svg class="ic"><use href="#i-check"/></svg>Tümünü seç
+            <svg class="ic"><use href="#i-check"/></svg>Select all
           </button>
           <button class="chip-btn" id="btnSelectNone" type="button">
-            <svg class="ic"><use href="#i-x"/></svg>Hiçbirini seçme
+            <svg class="ic"><use href="#i-x"/></svg>Clear
           </button>
         </div>
       </div>
@@ -263,7 +276,7 @@
       <div class="results-head">
         <span class="results-dot"></span>
         <div class="results-titleblock">
-          <div class="results-title" id="resultsTitle">Temizlik tamamlandı</div>
+          <div class="results-title" id="resultsTitle">Cleanup complete</div>
           <div class="results-sub" id="resultsSubtitle"></div>
         </div>
         <button class="icon-btn results-close" id="resultsClose" type="button" aria-label="Kapat">
@@ -278,8 +291,8 @@
     <section class="section">
       <div class="section-head">
         <div class="section-titleblock">
-          <h2 class="section-title">Sistem Bakımı</h2>
-          <span class="section-sub">Temizlik dışı onarım araçları</span>
+          <h2 class="section-title">System maintenance</h2>
+          <span class="section-sub">Repair tools beyond cleanup</span>
         </div>
       </div>
       <ul class="cat-list cat-list-tight" role="list">
@@ -287,12 +300,12 @@
           <div class="cat-row cat-row-static">
             <span class="cat-ic"><svg class="ic"><use href="#i-spotlight"/></svg></span>
             <span class="cat-meta">
-              <span class="cat-name">Spotlight Dizinini Yeniden Oluştur</span>
-              <span class="cat-desc">Hatalı sistem boyutu gösterimlerini ve arama veritabanını sıfırlar.</span>
+              <span class="cat-name">Rebuild Spotlight Index</span>
+              <span class="cat-desc">Resets wrong system size readings and the search database.</span>
             </span>
             <button class="btn btn-ghost btn-sm" id="btnSpotlight" type="button">
               <span class="spinner" aria-hidden="true"></span>
-              <span class="btn-text">Yenile</span>
+              <span class="btn-text">Rebuild</span>
             </button>
           </div>
         </li>
@@ -300,12 +313,12 @@
           <div class="cat-row cat-row-static">
             <span class="cat-ic"><svg class="ic"><use href="#i-dns"/></svg></span>
             <span class="cat-meta">
-              <span class="cat-name">DNS Önbelleğini Temizle</span>
-              <span class="cat-desc">DNS çözümleme sorunlarını ve eski kayıtları temizler.</span>
+              <span class="cat-name">Flush DNS Cache</span>
+              <span class="cat-desc">Clears DNS resolution issues and stale records.</span>
             </span>
             <button class="btn btn-ghost btn-sm" id="btnFlushDns" type="button">
               <span class="spinner" aria-hidden="true"></span>
-              <span class="btn-text">Temizle</span>
+              <span class="btn-text">Flush</span>
             </button>
           </div>
         </li>
@@ -313,12 +326,12 @@
           <div class="cat-row cat-row-static">
             <span class="cat-ic"><svg class="ic"><use href="#i-ram"/></svg></span>
             <span class="cat-meta">
-              <span class="cat-name">RAM Önbelleğini Boşalt</span>
-              <span class="cat-desc">Etkin olmayan bellek sayfalarını serbest bırakır.</span>
+              <span class="cat-name">Purge Inactive RAM</span>
+              <span class="cat-desc">Frees inactive memory pages back to the system.</span>
             </span>
             <button class="btn btn-ghost btn-sm" id="btnPurgeRam" type="button">
               <span class="spinner" aria-hidden="true"></span>
-              <span class="btn-text">Boşalt</span>
+              <span class="btn-text">Purge</span>
             </button>
           </div>
         </li>
@@ -326,12 +339,12 @@
           <div class="cat-row cat-row-static">
             <span class="cat-ic"><svg class="ic"><use href="#i-agent"/></svg></span>
             <span class="cat-meta">
-              <span class="cat-name">Bozuk LaunchAgents Temizle</span>
-              <span class="cat-desc">Geçersiz .plist dosyalarını kaldırır, yavaş giriş sorunlarını çözer.</span>
+              <span class="cat-name">Clean Broken LaunchAgents</span>
+              <span class="cat-desc">Removes invalid .plist files that cause slow login.</span>
             </span>
             <button class="btn btn-ghost btn-sm" id="btnLaunchAgents" type="button">
               <span class="spinner" aria-hidden="true"></span>
-              <span class="btn-text">Temizle</span>
+              <span class="btn-text">Clean</span>
             </button>
           </div>
         </li>
@@ -339,12 +352,12 @@
           <div class="cat-row cat-row-static">
             <span class="cat-ic"><svg class="ic"><use href="#i-temp"/></svg></span>
             <span class="cat-meta">
-              <span class="cat-name">Yerel Snapshot İnceltme</span>
-              <span class="cat-desc">APFS purgeable alanını gerçek boş alana çevirir.</span>
+              <span class="cat-name">Thin Local Snapshots</span>
+              <span class="cat-desc">Converts APFS purgeable space into real free space.</span>
             </span>
             <button class="btn btn-ghost btn-sm" id="btnThinSnapshots" type="button">
               <span class="spinner" aria-hidden="true"></span>
-              <span class="btn-text">İncelt</span>
+              <span class="btn-text">Thin</span>
             </button>
           </div>
         </li>
@@ -357,13 +370,13 @@
       <section class="section">
         <div class="section-head">
           <div class="section-titleblock">
-            <h2 class="section-title">Uygulama Kaldırıcı</h2>
-            <span class="section-sub" id="appsCount">Taranıyor...</span>
+            <h2 class="section-title">App Uninstaller</h2>
+            <span class="section-sub" id="appsCount">Scanning…</span>
           </div>
           <div class="section-tools">
             <div class="search-box">
               <svg class="ic"><use href="#i-search"/></svg>
-              <input type="text" id="appsSearch" placeholder="Uygulama ara..." aria-label="Uygulama ara" />
+              <input type="text" id="appsSearch" placeholder="Search apps…" aria-label="Search apps" />
             </div>
           </div>
         </div>
@@ -381,42 +394,42 @@
       <section class="section">
         <div class="section-head">
           <div class="section-titleblock">
-            <h2 class="section-title">Temizlenebilir Dosyalar</h2>
-            <span class="section-sub" id="filesCount">Önce tarama yapın</span>
+            <h2 class="section-title">Cleanable Files</h2>
+            <span class="section-sub" id="filesCount">Scan first</span>
           </div>
           <div class="section-tools files-toolbar">
             <div class="search-box">
               <svg class="ic"><use href="#i-search"/></svg>
-              <input type="search" id="filesSearch" placeholder="Dosya veya yol ara…" aria-label="Dosya ara" autocomplete="off" />
+              <input type="search" id="filesSearch" placeholder="Search file or path…" aria-label="Search files" autocomplete="off" />
             </div>
-            <select id="filesSort" class="files-sort" aria-label="Sıralama">
-              <option value="size:desc">Boyut (büyük → küçük)</option>
-              <option value="size:asc">Boyut (küçük → büyük)</option>
-              <option value="age:desc">Yaş (eski → yeni)</option>
-              <option value="name:asc">Ad (A → Z)</option>
+            <select id="filesSort" class="files-sort" aria-label="Sort">
+              <option value="size:desc">Size (large → small)</option>
+              <option value="size:asc">Size (small → large)</option>
+              <option value="age:desc">Age (old → new)</option>
+              <option value="name:asc">Name (A → Z)</option>
             </select>
-            <button class="btn btn-sm" id="filesSelectAll" type="button">Tümünü Seç</button>
-            <button class="btn btn-sm" id="filesSelectNone" type="button">Seçimi Kaldır</button>
+            <button class="btn btn-sm" id="filesSelectAll" type="button">Select all</button>
+            <button class="btn btn-sm" id="filesSelectNone" type="button">Clear</button>
           </div>
         </div>
 
         <ul id="filesList" class="files-list" role="list" aria-live="polite">
           <!-- Dynamically populated -->
         </ul>
-        <div id="filesEmpty" class="files-empty" hidden>Henüz tarama yapılmadı. "Tara" düğmesine basın.</div>
+        <div id="filesEmpty" class="files-empty" hidden>No scan yet. Press "Scan".</div>
 
         <div class="files-footer">
-          <span class="files-total-label">Seçilen: <b id="filesSelectedTotal">0 B</b></span>
+          <span class="files-total-label">Selected: <b id="filesSelectedTotal">0 B</b></span>
           <button class="btn btn-accent" id="btnCleanSelected" type="button" disabled>
             <span class="spinner" aria-hidden="true"></span>
-            <span class="btn-text">Seçilenleri Temizle</span>
+            <span class="btn-text">Clean selected</span>
           </button>
         </div>
       </section>
     </div>
 
     <!-- ═══ Terminal (drawer) ═══ -->
-    <section class="term" id="term" aria-label="İşlem kayıtları">
+    <section class="term" id="term" aria-label="Activity log">
       <button class="term-head" id="termHead" type="button" aria-expanded="false">
         <span class="term-headleft">
           <svg class="ic"><use href="#i-terminal"/></svg>
@@ -424,7 +437,7 @@
           <span class="term-badge" id="termCount">0</span>
         </span>
         <span class="term-headright">
-          <span class="term-hint">İşlem kayıtları</span>
+          <span class="term-hint">Activity log</span>
           <svg class="ic term-chev"><use href="#i-chev"/></svg>
         </span>
       </button>
@@ -435,7 +448,7 @@
     <footer class="foot">
       <span>Apple Cleanup v1.1</span>
       <span class="foot-dot">·</span>
-      <span>macOS sistem temizleme aracı</span>
+      <span>macOS system cleanup tool</span>
       <span class="foot-dot">·</span>
       <a href="https://github.com" class="foot-link">GitHub</a>
     </footer>
