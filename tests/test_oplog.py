@@ -169,3 +169,27 @@ def test_history_json_skips_malformed_lines(tmp_path):
     rows = json.loads(out.stdout)
     assert len(rows) == 1
     assert rows[0]["path"] == "/tmp/ok"
+
+
+def test_history_human_empty_shows_message(tmp_path):
+    env = dict(os.environ, HOME=str(tmp_path))
+    out = subprocess.run(["bash", str(SCRIPT), "--lang", "en", "--history"],
+                         env=env, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert "No cleanup history yet" in out.stdout
+
+
+def test_history_human_lists_records_newest_first(tmp_path):
+    log = _log_path(tmp_path)
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        "100\ttrash\t2048\t/tmp/older\tuser_cache\n"
+        "200\tdelete\t4096\t/tmp/newer\tsystem_cache\n"
+    )
+    env = dict(os.environ, HOME=str(tmp_path))
+    out = subprocess.run(["bash", str(SCRIPT), "--lang", "en", "--history"],
+                         env=env, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert "/tmp/newer" in out.stdout and "/tmp/older" in out.stdout
+    # Newest first: /tmp/newer appears before /tmp/older.
+    assert out.stdout.index("/tmp/newer") < out.stdout.index("/tmp/older")
