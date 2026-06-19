@@ -653,6 +653,9 @@ _should_force_rm() {
 # Context variable: set by clean functions to indicate sudo context
 _CURRENT_NEEDS_SUDO=0
 _CURRENT_IS_TRASH_EMPTY=0
+# Category key for the item currently being cleaned (set by run_clean); used to
+# tag operation-log records. Empty when cleanup runs outside a category loop.
+_CURRENT_CATEGORY=""
 
 safe_rm() {
   local path="$1"
@@ -684,12 +687,14 @@ safe_rm() {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     else
       rm -rf "$path" 2>/dev/null && {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     fi
   else
@@ -698,6 +703,7 @@ safe_rm() {
       success "$label: ${BOLD}${sz_h}${NC} $(L trashed)"
       TOTAL_FREED=$((TOTAL_FREED + sz_b))
       TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+      oplog_record "trash" "$sz_b" "$path" "$_CURRENT_CATEGORY"
     else
       err "$label $(L delete_failed)"
     fi
@@ -740,12 +746,14 @@ safe_rm_contents() {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     else
       find "$path" -maxdepth 1 -mindepth 1 -exec rm -rf {} + 2>/dev/null && {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     fi
   else
@@ -759,6 +767,7 @@ safe_rm_contents() {
       success "$label: ${BOLD}${sz_h}${NC} $(L trashed)"
       TOTAL_FREED=$((TOTAL_FREED + sz_b))
       TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+      oplog_record "trash" "$sz_b" "$path" "$_CURRENT_CATEGORY"
     fi
   fi
 }
@@ -1857,7 +1866,9 @@ run_clean() {
         warn "$(cat_name "$real_idx") $(L skipped) ($(L sudo_required))."
         continue
       fi
+      _CURRENT_CATEGORY="${CAT_IDS[$real_idx]}"
       "${fn_map[$real_idx]}"
+      _CURRENT_CATEGORY=""
     fi
   done
 }

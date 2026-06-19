@@ -46,6 +46,33 @@ def test_opt_out_writes_nothing(tmp_path):
     assert not _log_path(tmp_path).exists()
 
 
+def test_real_trash_op_records_one_line(tmp_path):
+    # Isolated HOME so the manual-mv trash fallback lands in tmp_path/.Trash.
+    (tmp_path / ".Trash").mkdir()
+    victim = tmp_path / "Library" / "Caches" / "com.example.app"
+    victim.mkdir(parents=True)
+    (victim / "blob.bin").write_bytes(b"x" * 4096)
+    env = dict(os.environ, HOME=str(tmp_path))
+    cmd = (f'source "{SCRIPT}" >/dev/null 2>&1; '
+           f'safe_rm "{victim}" "Example" >/dev/null 2>&1; true')
+    out = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    lines = _log_path(tmp_path).read_text().splitlines()
+    assert len(lines) == 1
+    assert lines[0].split("\t")[1] in ("trash", "delete")
+
+
+def test_dry_run_records_nothing(tmp_path):
+    victim = tmp_path / "Library" / "Caches" / "com.example.app"
+    victim.mkdir(parents=True)
+    (victim / "blob.bin").write_bytes(b"x" * 4096)
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_DRYRUN="1")
+    cmd = (f'source "{SCRIPT}" >/dev/null 2>&1; '
+           f'safe_rm "{victim}" "Example" >/dev/null 2>&1; true')
+    subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True, timeout=30)
+    assert not _log_path(tmp_path).exists()
+
+
 def test_rotation_truncates_when_over_cap(tmp_path):
     # Pre-fill the log past a tiny cap, then record once; the writer should
     # rotate to the most recent half before appending, keeping it bounded.
