@@ -1,7 +1,0 @@
-c0cc830 feat: clean selected files from the Dosyalar tab via /api/clean
-060b465 feat: render and wire the Dosyalar tab (rows, selection, total, sort, search)
-f764545 feat: add Dosyalar (cleanable files) tab markup and styles
-dbbf3fa fix: conservative safety fallback (unknown risk -> caution) + edge-case tests
-c68949e feat: add pure file-list helpers (flatten/sort/filter/select/payload) with tests
-932e32f fix: expose in_total per category and compute headline total without double-counting
-8dcd4ef fix: remove silent mock fallback that showed fabricated scan data
