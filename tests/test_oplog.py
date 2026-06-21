@@ -189,6 +189,62 @@ def test_history_json_v2_seven_col_line_parses_correctly(tmp_path):
     assert row["recoverable"] is True
 
 
+def test_history_json_v2_delete_with_empty_dest_keeps_category(tmp_path):
+    # v2 delete rows (and bulk trashings) write an EMPTY trash_dest (6th
+    # field). Tab is an IFS-whitespace char, so Bash 3.2 `read` with
+    # IFS=$'\t' collapses the empty field, shifting category into dest and
+    # leaving the real category empty. Must not regress.
+    log = _log_path(tmp_path)
+    log.parent.mkdir(parents=True)
+    log.write_text("1700000000\tsessX\tdelete\t99\t/src/p\t\tmycat\n")
+    env = dict(os.environ, HOME=str(tmp_path))
+    out = subprocess.run(["bash", str(SCRIPT), "--history-json"],
+                         env=env, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    rows = json.loads(out.stdout)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["action"] == "delete"
+    assert row["path"] == "/src/p"
+    assert row["category"] == "mycat"
+    assert row["recoverable"] is False
+
+
+def test_history_json_v2_trash_with_dest_keeps_category(tmp_path):
+    # Sanity check: a v2 trash row with a non-empty trash_dest must still
+    # parse category and recoverable correctly (no regression from the fix).
+    log = _log_path(tmp_path)
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        "1700000001\tsessY\ttrash\t123\t/src/q\t/src/.Trash/q\tothercat\n"
+    )
+    env = dict(os.environ, HOME=str(tmp_path))
+    out = subprocess.run(["bash", str(SCRIPT), "--history-json"],
+                         env=env, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    rows = json.loads(out.stdout)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["action"] == "trash"
+    assert row["path"] == "/src/q"
+    assert row["category"] == "othercat"
+    assert row["recoverable"] is True
+
+
+def test_history_human_v2_delete_with_empty_dest_keeps_category(tmp_path):
+    # Same bug, human-readable --history path: empty trash_dest must not
+    # blank out the displayed category.
+    log = _log_path(tmp_path)
+    log.parent.mkdir(parents=True)
+    log.write_text("1700000000\tsessX\tdelete\t99\t/src/p\t\tmycat\n")
+    env = dict(os.environ, HOME=str(tmp_path))
+    out = subprocess.run(["bash", str(SCRIPT), "--lang", "en", "--history"],
+                         env=env, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert "mycat" in out.stdout
+    assert "/src/p" in out.stdout
+
+
 def test_history_json_skips_malformed_lines(tmp_path):
     log = _log_path(tmp_path)
     log.parent.mkdir(parents=True)

@@ -1907,7 +1907,14 @@ do_history_json() {
       [ -z "$line" ] && continue
       nf=$(awk -F'\t' '{print NF}' <<<"$line")
       if [ "$nf" -eq 7 ]; then
-        IFS=$'\t' read -r ts session action bytes path dest category <<<"$line"
+        # Bash 3.2's `read`/array splitting collapses empty fields with
+        # custom IFS (tab is IFS-whitespace), so fields are extracted via
+        # awk (which handles empty fields correctly) rather than `read`.
+        ts=$(awk -F'\t' '{print $1}' <<<"$line")
+        action=$(awk -F'\t' '{print $3}' <<<"$line")
+        bytes=$(awk -F'\t' '{print $4}' <<<"$line")
+        path=$(awk -F'\t' '{print $5}' <<<"$line")
+        category=$(awk -F'\t' '{print $7}' <<<"$line")
       elif [ "$nf" -eq 5 ]; then
         IFS=$'\t' read -r ts action bytes path category <<<"$line"
         session=""; dest=""
@@ -1943,7 +1950,14 @@ do_history() {
     [ -z "$line" ] && continue
     nf=$(awk -F'\t' '{print NF}' <<<"$line")
     if [ "$nf" -eq 7 ]; then
-      IFS=$'\t' read -r ts session action bytes path dest category <<<"$line"
+      # Bash 3.2's `read`/array splitting collapses empty fields with
+      # custom IFS (tab is IFS-whitespace), so fields are extracted via
+      # awk (which handles empty fields correctly) rather than `read`.
+      ts=$(awk -F'\t' '{print $1}' <<<"$line")
+      action=$(awk -F'\t' '{print $3}' <<<"$line")
+      bytes=$(awk -F'\t' '{print $4}' <<<"$line")
+      path=$(awk -F'\t' '{print $5}' <<<"$line")
+      category=$(awk -F'\t' '{print $7}' <<<"$line")
     elif [ "$nf" -eq 5 ]; then
       IFS=$'\t' read -r ts action bytes path category <<<"$line"
       session=""; dest=""
