@@ -539,30 +539,31 @@ json_escape_str() {
 OPLOG_FILE="$HOME/.cache/apple-cleanup/operations.log"
 OPLOG_MAX_BYTES="${APPLE_CLEANUP_OPLOG_MAX_BYTES:-5242880}"
 
-# oplog_record <action> <bytes> <path> <category>
-# action: trash (recoverable) | delete (permanent). Never fails the caller.
+# Unique per script invocation; tags every oplog record from this run.
+SESSION_ID="$(uuidgen 2>/dev/null || echo "$$-$(date +%s)")"
+
+# oplog_record <action> <bytes> <source> <trash_dest> <category>
+# action: trash (recoverable) | delete (permanent) | restore (audit).
 oplog_record() {
   [ "${APPLE_CLEANUP_NO_OPLOG:-0}" = "1" ] && return 0
   [ "${DRYRUN:-0}" = "1" ] && return 0
-  local action="$1" bytes="$2" path="$3" category="${4:-}"
-  # Keep each record single-line: collapse tabs/newlines in the path to spaces.
-  path="${path//$'\t'/ }"
-  path="${path//$'\n'/ }"
+  local action="$1" bytes="$2" path="$3" trash_dest="${4:-}" category="${5:-}"
+  path="${path//$'\t'/ }"; path="${path//$'\n'/ }"
+  trash_dest="${trash_dest//$'\t'/ }"; trash_dest="${trash_dest//$'\n'/ }"
   local dir; dir="$(dirname "$OPLOG_FILE")"
   mkdir -p "$dir" 2>/dev/null || return 0
-  # Rotate: if the log is over the cap, keep the most recent half.
   if [ -f "$OPLOG_FILE" ]; then
     local sz; sz=$(wc -c <"$OPLOG_FILE" 2>/dev/null | tr -d ' ')
     if [ -n "$sz" ] && [ "$sz" -gt "$OPLOG_MAX_BYTES" ] 2>/dev/null; then
       local lines half
       lines=$(wc -l <"$OPLOG_FILE" 2>/dev/null | tr -d ' ')
-      half=$(( lines / 2 ))
-      [ "$half" -lt 1 ] && half=1
+      half=$(( lines / 2 )); [ "$half" -lt 1 ] && half=1
       tail -n "$half" "$OPLOG_FILE" >"$OPLOG_FILE.tmp" 2>/dev/null \
         && mv "$OPLOG_FILE.tmp" "$OPLOG_FILE" 2>/dev/null
     fi
   fi
-  printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$action" "$bytes" "$path" "$category" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(date +%s)" "$SESSION_ID" "$action" "$bytes" "$path" "$trash_dest" "$category" \
     >>"$OPLOG_FILE" 2>/dev/null || true
   return 0
 }
@@ -616,24 +617,29 @@ confirm() {
 _trash_item() {
   local path="$1"
   [ -e "$path" ] || return 0
-
-  # Tier 1: AppleScript (native Finder trash with undo support)
-  if osascript -e 'tell application "Finder" to move POSIX file "'"$path"'" to trash' 2>/dev/null; then
+  local base; base=$(basename "$path")
+  # Tier 1: AppleScript (native Finder trash). Finder's trash is tied to the
+  # logged-in GUI session's real home directory, not an overridden $HOME, so
+  # only attempt it when $HOME matches the real account home (i.e. not under
+  # test isolation) -- otherwise go straight to the deterministic Tier 2 mv.
+  local _real_home; _real_home=$(eval echo "~$(id -un)" 2>/dev/null)
+  if [ -n "$_real_home" ] && [ "$_real_home" = "$HOME" ] \
+     && osascript -e 'tell application "Finder" to move POSIX file "'"$path"'" to trash' >/dev/null 2>&1; then
+    # Item lands at ~/.Trash/<base>; if renamed on collision, take newest match.
+    local dest="$HOME/.Trash/$base"
+    if [ ! -e "$dest" ]; then
+      dest=$(ls -dt "$HOME/.Trash/$base"* 2>/dev/null | head -n1) || dest=""
+    fi
+    echo "$dest"
     return 0
   fi
-
-  # Tier 2: Manual mv to ~/.Trash with collision-safe naming
-  local base dest
-  base=$(basename "$path")
-  dest="$HOME/.Trash/$base"
-  if [ -e "$dest" ]; then
-    # Append timestamp to avoid collision
-    dest="$HOME/.Trash/${base}.$(date +%s)"
-  fi
+  # Tier 2: manual mv with collision-safe naming
+  local dest="$HOME/.Trash/$base"
+  [ -e "$dest" ] && dest="$HOME/.Trash/${base}.$(date +%s)"
   if mv "$path" "$dest" 2>/dev/null; then
+    echo "$dest"
     return 0
   fi
-
   return 1
 }
 
@@ -689,23 +695,24 @@ safe_rm() {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
+        oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     else
       rm -rf "$path" 2>/dev/null && {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
+        oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     fi
   else
     # Trash-first (user files, non-sudo)
-    if _trash_item "$path"; then
+    local _td; _td="$(_trash_item "$path")"
+    if [ -n "$_td" ] || [ ! -e "$path" ]; then
       success "$label: ${BOLD}${sz_h}${NC} $(L trashed)"
       TOTAL_FREED=$((TOTAL_FREED + sz_b))
       TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-      oplog_record "trash" "$sz_b" "$path" "$_CURRENT_CATEGORY"
+      oplog_record "trash" "$sz_b" "$path" "$_td" "$_CURRENT_CATEGORY"
     else
       err "$label $(L delete_failed)"
     fi
@@ -748,14 +755,14 @@ safe_rm_contents() {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
+        oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     else
       find "$path" -maxdepth 1 -mindepth 1 -exec rm -rf {} + 2>/dev/null && {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
+        oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     fi
   else
@@ -763,13 +770,13 @@ safe_rm_contents() {
     local trashed_any=false
     local child
     while IFS= read -r -d '' child; do
-      _trash_item "$child" && trashed_any=true
+      _trash_item "$child" >/dev/null && trashed_any=true
     done < <(find "$path" -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
     if $trashed_any; then
       success "$label: ${BOLD}${sz_h}${NC} $(L trashed)"
       TOTAL_FREED=$((TOTAL_FREED + sz_b))
       TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-      oplog_record "trash" "$sz_b" "$path" "$_CURRENT_CATEGORY"
+      oplog_record "trash" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
     fi
   fi
 }
@@ -2856,6 +2863,10 @@ main() {
       --project-artifact-sub)
         i=$((i + 1))
         PROJECT_ARTIFACT_CLEAN="${args[$i]}"
+        ;;
+      --__noop)
+        # Test hook: allow `source clean_mac.sh --__noop` to load functions
+        # without executing the interactive flow. No-op.
         ;;
       --flush-dns)
         do_flush_dns
