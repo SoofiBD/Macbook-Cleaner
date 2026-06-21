@@ -539,30 +539,31 @@ json_escape_str() {
 OPLOG_FILE="$HOME/.cache/apple-cleanup/operations.log"
 OPLOG_MAX_BYTES="${APPLE_CLEANUP_OPLOG_MAX_BYTES:-5242880}"
 
-# oplog_record <action> <bytes> <path> <category>
-# action: trash (recoverable) | delete (permanent). Never fails the caller.
+# Unique per script invocation; tags every oplog record from this run.
+SESSION_ID="$(uuidgen 2>/dev/null || echo "$$-$(date +%s)")"
+
+# oplog_record <action> <bytes> <source> <trash_dest> <category>
+# action: trash (recoverable) | delete (permanent) | restore (audit).
 oplog_record() {
   [ "${APPLE_CLEANUP_NO_OPLOG:-0}" = "1" ] && return 0
   [ "${DRYRUN:-0}" = "1" ] && return 0
-  local action="$1" bytes="$2" path="$3" category="${4:-}"
-  # Keep each record single-line: collapse tabs/newlines in the path to spaces.
-  path="${path//$'\t'/ }"
-  path="${path//$'\n'/ }"
+  local action="$1" bytes="$2" path="$3" trash_dest="${4:-}" category="${5:-}"
+  path="${path//$'\t'/ }"; path="${path//$'\n'/ }"
+  trash_dest="${trash_dest//$'\t'/ }"; trash_dest="${trash_dest//$'\n'/ }"
   local dir; dir="$(dirname "$OPLOG_FILE")"
   mkdir -p "$dir" 2>/dev/null || return 0
-  # Rotate: if the log is over the cap, keep the most recent half.
   if [ -f "$OPLOG_FILE" ]; then
     local sz; sz=$(wc -c <"$OPLOG_FILE" 2>/dev/null | tr -d ' ')
     if [ -n "$sz" ] && [ "$sz" -gt "$OPLOG_MAX_BYTES" ] 2>/dev/null; then
       local lines half
       lines=$(wc -l <"$OPLOG_FILE" 2>/dev/null | tr -d ' ')
-      half=$(( lines / 2 ))
-      [ "$half" -lt 1 ] && half=1
+      half=$(( lines / 2 )); [ "$half" -lt 1 ] && half=1
       tail -n "$half" "$OPLOG_FILE" >"$OPLOG_FILE.tmp" 2>/dev/null \
         && mv "$OPLOG_FILE.tmp" "$OPLOG_FILE" 2>/dev/null
     fi
   fi
-  printf '%s\t%s\t%s\t%s\t%s\n' "$(date +%s)" "$action" "$bytes" "$path" "$category" \
+  printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+    "$(date +%s)" "$SESSION_ID" "$action" "$bytes" "$path" "$trash_dest" "$category" \
     >>"$OPLOG_FILE" 2>/dev/null || true
   return 0
 }
@@ -616,24 +617,29 @@ confirm() {
 _trash_item() {
   local path="$1"
   [ -e "$path" ] || return 0
-
-  # Tier 1: AppleScript (native Finder trash with undo support)
-  if osascript -e 'tell application "Finder" to move POSIX file "'"$path"'" to trash' 2>/dev/null; then
+  local base; base=$(basename "$path")
+  # Tier 1: AppleScript (native Finder trash). Finder's trash is tied to the
+  # logged-in GUI session's real home directory, not an overridden $HOME, so
+  # only attempt it when $HOME matches the real account home (i.e. not under
+  # test isolation) -- otherwise go straight to the deterministic Tier 2 mv.
+  local _real_home; _real_home=$(eval echo "~$(id -un)" 2>/dev/null)
+  if [ -n "$_real_home" ] && [ "$_real_home" = "$HOME" ] \
+     && osascript -e 'tell application "Finder" to move POSIX file "'"$path"'" to trash' >/dev/null 2>&1; then
+    # Item lands at ~/.Trash/<base>; if renamed on collision, take newest match.
+    local dest="$HOME/.Trash/$base"
+    if [ ! -e "$dest" ]; then
+      dest=$(ls -dt "$HOME/.Trash/$base"* 2>/dev/null | head -n1) || dest=""
+    fi
+    echo "$dest"
     return 0
   fi
-
-  # Tier 2: Manual mv to ~/.Trash with collision-safe naming
-  local base dest
-  base=$(basename "$path")
-  dest="$HOME/.Trash/$base"
-  if [ -e "$dest" ]; then
-    # Append timestamp to avoid collision
-    dest="$HOME/.Trash/${base}.$(date +%s)"
-  fi
+  # Tier 2: manual mv with collision-safe naming
+  local dest="$HOME/.Trash/$base"
+  [ -e "$dest" ] && dest="$HOME/.Trash/${base}.$(date +%s)"
   if mv "$path" "$dest" 2>/dev/null; then
+    echo "$dest"
     return 0
   fi
-
   return 1
 }
 
@@ -689,23 +695,24 @@ safe_rm() {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
+        oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     else
       rm -rf "$path" 2>/dev/null && {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
+        oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     fi
   else
     # Trash-first (user files, non-sudo)
-    if _trash_item "$path"; then
+    local _td; _td="$(_trash_item "$path")"
+    if [ -n "$_td" ] || [ ! -e "$path" ]; then
       success "$label: ${BOLD}${sz_h}${NC} $(L trashed)"
       TOTAL_FREED=$((TOTAL_FREED + sz_b))
       TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-      oplog_record "trash" "$sz_b" "$path" "$_CURRENT_CATEGORY"
+      oplog_record "trash" "$sz_b" "$path" "$_td" "$_CURRENT_CATEGORY"
     else
       err "$label $(L delete_failed)"
     fi
@@ -748,14 +755,14 @@ safe_rm_contents() {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
+        oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     else
       find "$path" -maxdepth 1 -mindepth 1 -exec rm -rf {} + 2>/dev/null && {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-        oplog_record "delete" "$sz_b" "$path" "$_CURRENT_CATEGORY"
+        oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
       } || err "$label $(L delete_failed)"
     fi
   else
@@ -763,13 +770,13 @@ safe_rm_contents() {
     local trashed_any=false
     local child
     while IFS= read -r -d '' child; do
-      _trash_item "$child" && trashed_any=true
+      _trash_item "$child" >/dev/null && trashed_any=true
     done < <(find "$path" -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
     if $trashed_any; then
       success "$label: ${BOLD}${sz_h}${NC} $(L trashed)"
       TOTAL_FREED=$((TOTAL_FREED + sz_b))
       TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-      oplog_record "trash" "$sz_b" "$path" "$_CURRENT_CATEGORY"
+      oplog_record "trash" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
     fi
   fi
 }
@@ -1895,8 +1902,25 @@ do_history_json() {
   echo -n "["
   local first=true
   if [ -f "$OPLOG_FILE" ]; then
-    local ts action bytes path category recoverable size_h
-    while IFS=$'\t' read -r ts action bytes path category; do
+    local line ts session action bytes path dest category recoverable size_h nf
+    while IFS= read -r line; do
+      [ -z "$line" ] && continue
+      nf=$(awk -F'\t' '{print NF}' <<<"$line")
+      if [ "$nf" -eq 7 ]; then
+        # Bash 3.2's `read`/array splitting collapses empty fields with
+        # custom IFS (tab is IFS-whitespace), so fields are extracted via
+        # awk (which handles empty fields correctly) rather than `read`.
+        ts=$(awk -F'\t' '{print $1}' <<<"$line")
+        action=$(awk -F'\t' '{print $3}' <<<"$line")
+        bytes=$(awk -F'\t' '{print $4}' <<<"$line")
+        path=$(awk -F'\t' '{print $5}' <<<"$line")
+        category=$(awk -F'\t' '{print $7}' <<<"$line")
+      elif [ "$nf" -eq 5 ]; then
+        IFS=$'\t' read -r ts action bytes path category <<<"$line"
+        session=""; dest=""
+      else
+        continue
+      fi
       [ -z "$ts" ] && continue
       case "$ts" in *[!0-9]*) continue ;; esac
       case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
@@ -1921,8 +1945,25 @@ do_history() {
     return 0
   fi
   printf "  %-19s  %-9s  %-10s  %-14s  %s\n" "When" "Action" "Size" "Category" "Path"
-  local ts action bytes path category when size_h tag
-  while IFS=$'\t' read -r ts action bytes path category; do
+  local line ts session action bytes path dest category when size_h tag nf
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    nf=$(awk -F'\t' '{print NF}' <<<"$line")
+    if [ "$nf" -eq 7 ]; then
+      # Bash 3.2's `read`/array splitting collapses empty fields with
+      # custom IFS (tab is IFS-whitespace), so fields are extracted via
+      # awk (which handles empty fields correctly) rather than `read`.
+      ts=$(awk -F'\t' '{print $1}' <<<"$line")
+      action=$(awk -F'\t' '{print $3}' <<<"$line")
+      bytes=$(awk -F'\t' '{print $4}' <<<"$line")
+      path=$(awk -F'\t' '{print $5}' <<<"$line")
+      category=$(awk -F'\t' '{print $7}' <<<"$line")
+    elif [ "$nf" -eq 5 ]; then
+      IFS=$'\t' read -r ts action bytes path category <<<"$line"
+      session=""; dest=""
+    else
+      continue
+    fi
     [ -z "$ts" ] && continue
     case "$ts" in *[!0-9]*) continue ;; esac
     case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
@@ -2538,6 +2579,144 @@ scan_project_artifacts_subitems_json() {
 
 # ─── Special Action Handlers ────────────────────────────────────────────────
 
+# Emit recent operations grouped by session as JSON for the web UI.
+do_ops_json() {
+  JSON_MODE=true
+  if [ ! -f "$OPLOG_FILE" ]; then
+    printf '{"success":true,"sessions":[]}\n'; return 0
+  fi
+  while IFS=$'\t' read -r id rest; do
+    local ts session action bytes source dest category recoverable nf
+    # Bash 3.2's `read`/array splitting collapses empty fields with custom
+    # IFS, so fields are extracted via awk (which handles empty fields
+    # correctly) rather than `read`.
+    nf=$(awk -F'\t' '{print NF}' <<<"$rest")
+    if [ "$nf" -eq 7 ]; then
+      ts=$(awk -F'\t' '{print $1}' <<<"$rest")
+      session=$(awk -F'\t' '{print $2}' <<<"$rest")
+      action=$(awk -F'\t' '{print $3}' <<<"$rest")
+      bytes=$(awk -F'\t' '{print $4}' <<<"$rest")
+      source=$(awk -F'\t' '{print $5}' <<<"$rest")
+      dest=$(awk -F'\t' '{print $6}' <<<"$rest")
+      category=$(awk -F'\t' '{print $7}' <<<"$rest")
+    elif [ "$nf" -eq 5 ]; then
+      # legacy 5-col line: ts action bytes path category
+      ts=$(awk -F'\t' '{print $1}' <<<"$rest")
+      action=$(awk -F'\t' '{print $2}' <<<"$rest")
+      bytes=$(awk -F'\t' '{print $3}' <<<"$rest")
+      source=$(awk -F'\t' '{print $4}' <<<"$rest")
+      category=$(awk -F'\t' '{print $5}' <<<"$rest")
+      session="legacy"; dest=""
+    else
+      continue
+    fi
+    [ -z "$ts" ] && continue
+    case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
+    recoverable=false
+    if [ "$action" = "trash" ] && [ -n "$dest" ] && [ -e "$dest" ]; then
+      local parent; parent="$(dirname "$source")"
+      { [ ! -e "$source" ] || [ -d "$parent" ]; } && recoverable=true
+    fi
+    local esc_src esc_dest esc_cat esc_session
+    esc_src=$(json_escape_str "$source"); esc_dest=$(json_escape_str "$dest")
+    esc_cat=$(json_escape_str "$category")
+    # Escape session before it enters the awk aggregation pipeline below,
+    # since awk can't call the bash json_escape_str helper itself.
+    esc_session=$(json_escape_str "$session")
+    local item
+    item="{\"id\":$id,\"source\":\"$esc_src\",\"trash_dest\":\"$esc_dest\",\"bytes\":${bytes:-0},\"category\":\"$esc_cat\",\"action\":\"$action\",\"recoverable\":$recoverable}"
+    # Stash: SESSION<TAB>TS<TAB>BYTES<TAB>REC<TAB>ITEMJSON
+    printf '%s\t%s\t%s\t%s\t%s\n' "$esc_session" "${ts:-0}" "${bytes:-0}" "$recoverable" "$item"
+  done < <(awk '{printf "%d\t%s\n", NR, $0}' "$OPLOG_FILE") \
+    | awk -F'\t' '
+        { sess=$1; ts=$2; by=$3; rec=$4; item=$5;
+          if (!(sess in firstts)) { order[++k]=sess; firstts[sess]=ts }
+          if (ts+0 < firstts[sess]+0) firstts[sess]=ts;
+          tot[sess]+=by; cnt[sess]++; if (rec=="true") reccnt[sess]++;
+          items[sess]=items[sess] (items[sess]==""?"":",") item;
+        }
+        END {
+          printf "{\"success\":true,\"sessions\":[";
+          # newest session first: order[] is file order (old->new); reverse it, cap 20.
+          first=1; printed=0;
+          for (j=k; j>=1 && printed<20; j--) {
+            s=order[j];
+            if (!first) printf ","; first=0;
+            printf "{\"session_id\":\"%s\",\"start_ts\":%d,\"total_bytes\":%d,\"item_count\":%d,\"recoverable_count\":%d,\"items\":[%s]}",
+              s, firstts[s], tot[s], cnt[s], (reccnt[s]+0), items[s];
+            printed++;
+          }
+          printf "]}\n";
+        }'
+}
+
+do_restore_json() {
+  JSON_MODE=true
+  local mode="$1" selector="$2"
+  local restored="" skipped="" failed=""
+  if [ ! -f "$OPLOG_FILE" ]; then
+    printf '{"success":true,"restored":[],"skipped":[],"failed":[]}\n'; return 0
+  fi
+  # Build a quick membership test for explicit item ids.
+  local want_ids=",$selector,"
+  local id ts session action bytes source dest category nf
+  while IFS=$'\t' read -r id rest; do
+    # Bash 3.2's `read`/array splitting collapses empty fields with custom
+    # IFS, so fields are extracted via awk (which handles empty fields
+    # correctly) rather than `read`, mirroring do_ops_json.
+    nf=$(awk -F'\t' '{print NF}' <<<"$rest")
+    if [ "$nf" -eq 7 ]; then
+      ts=$(awk -F'\t' '{print $1}' <<<"$rest")
+      session=$(awk -F'\t' '{print $2}' <<<"$rest")
+      action=$(awk -F'\t' '{print $3}' <<<"$rest")
+      bytes=$(awk -F'\t' '{print $4}' <<<"$rest")
+      source=$(awk -F'\t' '{print $5}' <<<"$rest")
+      dest=$(awk -F'\t' '{print $6}' <<<"$rest")
+      category=$(awk -F'\t' '{print $7}' <<<"$rest")
+    else
+      continue   # legacy 5-col lines are never restorable
+    fi
+    [ -z "$ts" ] && continue
+    # Selection filter
+    if [ "$mode" = "session" ]; then
+      [ "$session" = "$selector" ] || continue
+    else
+      case "$want_ids" in *",$id,"*) : ;; *) continue ;; esac
+    fi
+    local esc_src; esc_src=$(json_escape_str "$source")
+    if [ "$action" != "trash" ]; then
+      skipped="$skipped${skipped:+,}{\"source\":\"$esc_src\",\"reason\":\"not_recoverable\"}"; continue
+    fi
+    # Guard: protected/system source
+    case "$source" in
+      /System/*|/usr/*|/bin/*|/sbin/*|/etc/*|/private/etc/*)
+        skipped="$skipped${skipped:+,}{\"source\":\"$esc_src\",\"reason\":\"protected\"}"; continue ;;
+    esac
+    # Trash item gone
+    if [ -z "$dest" ] || [ ! -e "$dest" ]; then
+      skipped="$skipped${skipped:+,}{\"source\":\"$esc_src\",\"reason\":\"trash_missing\"}"; continue
+    fi
+    # Parent dir gone
+    local parent; parent="$(dirname "$source")"
+    if [ ! -d "$parent" ]; then
+      skipped="$skipped${skipped:+,}{\"source\":\"$esc_src\",\"reason\":\"parent_missing\"}"; continue
+    fi
+    # Collision -> rename
+    local target="$source" reason="ok"
+    if [ -e "$source" ]; then
+      target="$source (restored)"; reason="renamed"
+    fi
+    if mv "$dest" "$target" 2>/dev/null; then
+      oplog_record "restore" "$bytes" "$target" "" "$category"
+      restored="$restored${restored:+,}{\"source\":\"$(json_escape_str "$target")\",\"reason\":\"$reason\"}"
+    else
+      failed="$failed${failed:+,}{\"source\":\"$esc_src\",\"reason\":\"move_failed\"}"
+    fi
+  done < <(awk '{printf "%d\t%s\n", NR, $0}' "$OPLOG_FILE")
+  printf '{"success":true,"restored":[%s],"skipped":[%s],"failed":[%s]}\n' \
+    "$restored" "$skipped" "$failed"
+}
+
 do_flush_dns() {
   JSON_MODE=true
   local ok=true
@@ -2857,9 +3036,23 @@ main() {
         i=$((i + 1))
         PROJECT_ARTIFACT_CLEAN="${args[$i]}"
         ;;
+      --__noop)
+        # Test hook: allow `source clean_mac.sh --__noop` to load functions
+        # without executing the interactive flow. No-op.
+        ;;
       --flush-dns)
         do_flush_dns
         exit 0
+        ;;
+      --ops-json)
+        do_ops_json
+        exit 0
+        ;;
+      --restore-session)
+        i=$((i + 1)); do_restore_json session "${args[$i]}"; exit 0
+        ;;
+      --restore-items)
+        i=$((i + 1)); do_restore_json items "${args[$i]}"; exit 0
         ;;
       --purge-ram)
         do_purge_ram
@@ -2899,6 +3092,9 @@ main() {
         echo "  --project-artifact-sub 'p1,p2' Project artifact paths to delete"
         echo "  --status-json            System status as JSON"
         echo "  --thin-snapshots-json    Thin local TM snapshots, return JSON"
+        echo "  --ops-json               List restorable operations as JSON"
+        echo "  --restore-session <id>   Restore all recoverable items in a run"
+        echo "  --restore-items <i,j>    Restore specific operation ids"
         echo "  --flush-dns              Flush DNS cache"
         echo "  --purge-ram              Purge RAM cache"
         echo "  --launchagents-clean     Clean invalid LaunchAgents"

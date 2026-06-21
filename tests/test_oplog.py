@@ -13,7 +13,7 @@ def _run_record(home: Path, *args, env_extra=None) -> None:
     if env_extra:
         env.update(env_extra)
     quoted = " ".join(f"'{a}'" for a in args)
-    cmd = f'source "{SCRIPT}" >/dev/null 2>&1; oplog_record {quoted}'
+    cmd = f'source "{SCRIPT}" --__noop >/dev/null 2>&1; oplog_record {quoted}'
     out = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
 
@@ -23,26 +23,28 @@ def _log_path(home: Path) -> Path:
 
 
 def test_record_appends_one_line(tmp_path):
-    _run_record(tmp_path, "trash", "2048", "/tmp/foo cache", "user_cache")
+    _run_record(tmp_path, "trash", "2048", "/tmp/foo cache", "/tmp/.Trash/foo cache", "user_cache")
     lines = _log_path(tmp_path).read_text().splitlines()
     assert len(lines) == 1
-    ts, action, size, path, cat = lines[0].split("\t")
+    ts, session, action, size, path, dest, cat = lines[0].split("\t")
     assert action == "trash"
     assert size == "2048"
     assert path == "/tmp/foo cache"
+    assert dest == "/tmp/.Trash/foo cache"
     assert cat == "user_cache"
     assert ts.isdigit()
+    assert session != ""
 
 
 def test_record_sanitizes_tabs_and_newlines(tmp_path):
-    _run_record(tmp_path, "delete", "10", "/tmp/a\tb\nc", "logs")
+    _run_record(tmp_path, "delete", "10", "/tmp/a\tb\nc", "", "logs")
     lines = _log_path(tmp_path).read_text().splitlines()
     assert len(lines) == 1
-    assert lines[0].split("\t")[3] == "/tmp/a b c"
+    assert lines[0].split("\t")[4] == "/tmp/a b c"
 
 
 def test_opt_out_writes_nothing(tmp_path):
-    _run_record(tmp_path, "trash", "1", "/tmp/x", "logs",
+    _run_record(tmp_path, "trash", "1", "/tmp/x", "", "logs",
                 env_extra={"APPLE_CLEANUP_NO_OPLOG": "1"})
     assert not _log_path(tmp_path).exists()
 
@@ -60,7 +62,9 @@ def test_real_trash_op_records_one_line(tmp_path):
     assert out.returncode == 0, out.stderr
     lines = _log_path(tmp_path).read_text().splitlines()
     assert len(lines) == 1
-    assert lines[0].split("\t")[1] in ("trash", "delete")
+    cols = lines[0].split("\t")
+    assert len(cols) == 7, cols
+    assert cols[2] in ("trash", "delete")
 
 
 def test_dry_run_records_nothing(tmp_path):
@@ -87,7 +91,9 @@ def test_force_rm_records_delete_action(tmp_path):
     assert out.returncode == 0, out.stderr
     lines = _log_path(tmp_path).read_text().splitlines()
     assert len(lines) == 1
-    assert lines[0].split("\t")[1] == "delete"
+    cols = lines[0].split("\t")
+    assert len(cols) == 7, cols
+    assert cols[2] == "delete"
 
 
 def test_exclusion_path_no_double_count(tmp_path):
@@ -111,19 +117,23 @@ def test_exclusion_path_no_double_count(tmp_path):
 
 
 def test_rotation_truncates_when_over_cap(tmp_path):
-    # Pre-fill the log past a tiny cap, then record once; the writer should
-    # rotate to the most recent half before appending, keeping it bounded.
+    # Pre-fill the log past a tiny cap with legacy 5-col lines (simulating a
+    # log written before the v2 upgrade), then record once in v2 format; the
+    # writer should rotate to the most recent half before appending, keeping
+    # it bounded, and must not crash on the legacy-format lines it rotates.
     log = _log_path(tmp_path)
     log.parent.mkdir(parents=True)
     log.write_text("".join(f"{i}\ttrash\t10\t/tmp/p{i}\tlogs\n" for i in range(200)))
     before = len(log.read_text().splitlines())
-    _run_record(tmp_path, "trash", "10", "/tmp/new", "logs",
+    _run_record(tmp_path, "trash", "10", "/tmp/new", "", "logs",
                 env_extra={"APPLE_CLEANUP_OPLOG_MAX_BYTES": "200"})
     after_lines = log.read_text().splitlines()
     # Rotated to ~half the old size, plus the one new record, and far below the original.
     assert len(after_lines) < before
-    # The newest record survived, the oldest were dropped.
-    assert after_lines[-1].split("\t")[3] == "/tmp/new"
+    # The newest record survived (v2, 7 cols), the oldest legacy lines were dropped.
+    new_cols = after_lines[-1].split("\t")
+    assert len(new_cols) == 7, new_cols
+    assert new_cols[4] == "/tmp/new"
     assert after_lines[0].split("\t")[0] != "0"
 
 
@@ -154,6 +164,85 @@ def test_history_json_newest_first_with_fields(tmp_path):
     assert rows[0]["bytes"] == 4096
     assert "size_human" in rows[0]
     assert rows[1]["path"] == "/tmp/old"
+
+
+def test_history_json_v2_seven_col_line_parses_correctly(tmp_path):
+    # v2 format: ts, session_id, action, bytes, source, trash_dest, category.
+    # The reader must not parse this positionally as 5 columns (which would
+    # land session_id in "action" and bytes in "path").
+    log = _log_path(tmp_path)
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        "1700000000\tsessABC\ttrash\t1024\t/Users/x/junk\t/Users/x/.Trash/junk\ttestcat\n"
+    )
+    env = dict(os.environ, HOME=str(tmp_path))
+    out = subprocess.run(["bash", str(SCRIPT), "--history-json"],
+                         env=env, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    rows = json.loads(out.stdout)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["action"] == "trash"
+    assert row["bytes"] == 1024
+    assert row["path"] == "/Users/x/junk"  # source column (5th), not trash_dest
+    assert row["category"] == "testcat"
+    assert row["recoverable"] is True
+
+
+def test_history_json_v2_delete_with_empty_dest_keeps_category(tmp_path):
+    # v2 delete rows (and bulk trashings) write an EMPTY trash_dest (6th
+    # field). Tab is an IFS-whitespace char, so Bash 3.2 `read` with
+    # IFS=$'\t' collapses the empty field, shifting category into dest and
+    # leaving the real category empty. Must not regress.
+    log = _log_path(tmp_path)
+    log.parent.mkdir(parents=True)
+    log.write_text("1700000000\tsessX\tdelete\t99\t/src/p\t\tmycat\n")
+    env = dict(os.environ, HOME=str(tmp_path))
+    out = subprocess.run(["bash", str(SCRIPT), "--history-json"],
+                         env=env, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    rows = json.loads(out.stdout)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["action"] == "delete"
+    assert row["path"] == "/src/p"
+    assert row["category"] == "mycat"
+    assert row["recoverable"] is False
+
+
+def test_history_json_v2_trash_with_dest_keeps_category(tmp_path):
+    # Sanity check: a v2 trash row with a non-empty trash_dest must still
+    # parse category and recoverable correctly (no regression from the fix).
+    log = _log_path(tmp_path)
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        "1700000001\tsessY\ttrash\t123\t/src/q\t/src/.Trash/q\tothercat\n"
+    )
+    env = dict(os.environ, HOME=str(tmp_path))
+    out = subprocess.run(["bash", str(SCRIPT), "--history-json"],
+                         env=env, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    rows = json.loads(out.stdout)
+    assert len(rows) == 1
+    row = rows[0]
+    assert row["action"] == "trash"
+    assert row["path"] == "/src/q"
+    assert row["category"] == "othercat"
+    assert row["recoverable"] is True
+
+
+def test_history_human_v2_delete_with_empty_dest_keeps_category(tmp_path):
+    # Same bug, human-readable --history path: empty trash_dest must not
+    # blank out the displayed category.
+    log = _log_path(tmp_path)
+    log.parent.mkdir(parents=True)
+    log.write_text("1700000000\tsessX\tdelete\t99\t/src/p\t\tmycat\n")
+    env = dict(os.environ, HOME=str(tmp_path))
+    out = subprocess.run(["bash", str(SCRIPT), "--lang", "en", "--history"],
+                         env=env, capture_output=True, text=True, timeout=30)
+    assert out.returncode == 0, out.stderr
+    assert "mycat" in out.stdout
+    assert "/src/p" in out.stdout
 
 
 def test_history_json_skips_malformed_lines(tmp_path):

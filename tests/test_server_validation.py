@@ -352,3 +352,36 @@ class TestHistoryRoute(unittest.TestCase):
             httpd.shutdown()
             if old_home is not None:
                 os.environ["HOME"] = old_home
+
+
+class TestValidateSessionId(unittest.TestCase):
+    def setUp(self):
+        from server import _validate_session_id
+        self.v = _validate_session_id
+
+    def test_allows_uuid(self):
+        self.assertTrue(self.v("3F2504E0-4F89-41D3-9A0C-0305E82C3301"))
+
+    def test_allows_pid_ts_fallback(self):
+        self.assertTrue(self.v("12345-1700000000"))
+
+    def test_blocks_injection(self):
+        self.assertFalse(self.v("; rm -rf /"))
+        self.assertFalse(self.v("../../etc"))
+        self.assertFalse(self.v(""))
+        self.assertFalse(self.v("a" * 50))
+
+
+class TestValidateItemIds(unittest.TestCase):
+    def setUp(self):
+        from server import _validate_item_ids
+        self.v = _validate_item_ids
+
+    def test_allows_int_list(self):
+        self.assertTrue(self.v([1, 2, 3]))
+
+    def test_blocks_non_int(self):
+        self.assertFalse(self.v(["1; rm"]))
+        self.assertFalse(self.v([-1]))
+        self.assertFalse(self.v([]))
+        self.assertFalse(self.v("notalist"))

@@ -1070,13 +1070,71 @@
     });
     if (tabId === 'uninstaller') loadApplications();
     if (tabId === 'files') renderFileList();
-    if (tabId === 'history') loadHistory();
+    if (tabId === 'history') { loadOperations(); loadHistory(); }
   }
 
   tabCleanup.addEventListener('click', () => showTab('cleanup'));
   tabUninstaller.addEventListener('click', () => showTab('uninstaller'));
   tabFiles.addEventListener('click', () => showTab('files'));
   tabHistory.addEventListener('click', () => showTab('history'));
+
+  /* ──────────────────────────────────────────────────────────
+     Undo / Restore tab
+     ────────────────────────────────────────────────────────── */
+  async function loadOperations() {
+    const list = historyTabContent.querySelector('#undoList');
+    if (!list) return;
+    list.innerHTML = '<p class="muted">Loading…</p>';
+    try {
+      const data = await apiFetch('/api/operations');
+      const sessions = (data && data.sessions) || [];
+      if (!Array.isArray(sessions) || sessions.length === 0) {
+        list.innerHTML = '<p class="muted">No restorable operations.</p>';
+        return;
+      }
+      list.innerHTML = sessions.map((run) => {
+        const when = new Date((run.start_ts || 0) * 1000).toLocaleString();
+        const badge = run.recoverable_count > 0
+          ? `<span class="badge badge-ok">${escapeHtml(String(run.recoverable_count))} recoverable</span>`
+          : '<span class="badge badge-warn">none recoverable</span>';
+        const disabled = run.recoverable_count ? '' : 'disabled';
+        return `<div class="history-row undo-run">
+          <span class="history-when">${escapeHtml(when)}</span>
+          <span class="history-size">${escapeHtml(String(run.item_count || 0))} items</span>
+          <span class="history-cat">${escapeHtml(formatBytes(run.total_bytes || 0))}</span>
+          ${badge}
+          <button type="button" class="btn btn-sm btn-restore-run" data-session="${escapeAttr(String(run.session_id))}" ${disabled}>Restore run</button>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      list.innerHTML = '<p class="muted">Could not load operations.</p>';
+    }
+  }
+
+  const undoListEl = document.getElementById('undoList');
+  if (undoListEl) {
+    undoListEl.addEventListener('click', async (e) => {
+      const btn = e.target.closest('.btn-restore-run');
+      if (!btn) return;
+      btn.disabled = true;
+      const sessionId = btn.dataset.session;
+      try {
+        const res = await apiFetch('/api/restore', {
+          method: 'POST',
+          body: JSON.stringify({ session_id: sessionId }),
+        });
+        const restored = (res.restored || []).length;
+        const skipped = (res.skipped || []).length;
+        const failed = (res.failed || []).length;
+        termLog(`Restore: ${restored} restored, ${skipped} skipped, ${failed} failed`, failed ? 'error' : 'success');
+      } catch (err) {
+        termLog(`Restore failed: ${err.message || err}`, 'error');
+      } finally {
+        loadOperations();
+        loadHistory();
+      }
+    });
+  }
 
   /* ──────────────────────────────────────────────────────────
      Cleanup history tab

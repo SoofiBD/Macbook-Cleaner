@@ -279,6 +279,21 @@ _BROWSER_WHITELIST = frozenset({
 })
 
 
+_SESSION_RE = re.compile(r"^[0-9A-Fa-f-]{8,40}$|^[0-9]{1,10}-[0-9]{1,12}$")
+
+
+def _validate_session_id(s) -> bool:
+    """Validate a restore-session id: UUID-ish or pid-timestamp fallback."""
+    return isinstance(s, str) and bool(_SESSION_RE.match(s))
+
+
+def _validate_item_ids(lst) -> bool:
+    """Validate a list of restore item ids: non-empty list of non-negative ints."""
+    if not isinstance(lst, list) or not lst:
+        return False
+    return all(isinstance(x, int) and not isinstance(x, bool) and x >= 0 for x in lst)
+
+
 def _validate_app_leftover(name: str) -> bool:
     """Validate an app leftover directory name (no traversal, no injection)."""
     return bool(_APP_LEFTOVER_RE.match(name)) and ".." not in name and "/" not in name
@@ -484,6 +499,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             self._handle_forecast()
         elif path == "/api/history":
             self._handle_history()
+        elif path == "/api/operations":
+            self._handle_operations()
         else:
             self._serve_static(path)
 
@@ -507,6 +524,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             self._handle_thin_snapshots()
         elif parsed.path == "/api/uninstall":
             self._handle_uninstall()
+        elif parsed.path == "/api/restore":
+            self._handle_restore()
         else:
             self._send_error_json("Not found", 404)
 
@@ -529,6 +548,33 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         data, err = self._run_script(["--history-json"], timeout=15)
         if err:
             self._send_error_json(f"History error: {err}")
+        else:
+            self._send_json(data)
+
+    def _handle_operations(self):
+        data, err = self._run_script(["--ops-json"], timeout=30)
+        if err:
+            self._send_error_json(f"Operations error: {err}")
+        else:
+            self._send_json(data)
+
+    def _handle_restore(self):
+        payload, err = self._read_json_body()
+        if err:
+            return self._send_error_json(err, 400)
+        if "session_id" in payload:
+            if not _validate_session_id(payload["session_id"]):
+                return self._send_error_json("invalid session_id", 400)
+            args = ["--restore-session", payload["session_id"]]
+        elif "item_ids" in payload:
+            if not _validate_item_ids(payload["item_ids"]):
+                return self._send_error_json("invalid item_ids", 400)
+            args = ["--restore-items", ",".join(str(i) for i in payload["item_ids"])]
+        else:
+            return self._send_error_json("session_id or item_ids required", 400)
+        data, err = self._run_script(args, timeout=60)
+        if err:
+            self._send_error_json(f"Restore error: {err}")
         else:
             self._send_json(data)
 
