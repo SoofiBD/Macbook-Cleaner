@@ -23,8 +23,10 @@ import secrets
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import urllib.parse
+import webbrowser
 from pathlib import Path
 
 # Bind to loopback only — this API can delete files and must never be
@@ -922,12 +924,28 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             self._send_error_json(f"File read error: {e}")
 
 
+def _open_browser():
+    """Open the dashboard in the default browser once the server is up.
+
+    Disabled by exporting APPLE_CLEANUP_OPEN_BROWSER=0 (useful when running
+    headless or from a terminal where a browser pop-up is unwanted).
+    """
+    if os.environ.get("APPLE_CLEANUP_OPEN_BROWSER", "1") == "0":
+        return
+    try:
+        webbrowser.open(f"http://localhost:{PORT}/")
+    except Exception:
+        pass  # Browser launch is best-effort; the server still runs.
+
+
 def main():
     http.server.HTTPServer.allow_reuse_address = True
     server = http.server.HTTPServer((HOST, PORT), CleanupHandler)
     print(f"🍎 Apple Cleanup Dashboard v2.0.0")
     print(f"   http://localhost:{PORT}  (loopback only)")
     print(f"   Press Ctrl+C to stop\n")
+    # Open the browser shortly after the server starts accepting connections.
+    threading.Timer(1.0, _open_browser).start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

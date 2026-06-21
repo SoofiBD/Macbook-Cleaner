@@ -8,6 +8,37 @@
 
 Clean Mac safely removes unnecessary data on macOS such as caches, logs, temporary files, leftover application data, and Trash contents. It can be used from an interactive terminal interface or a lightweight web dashboard.
 
+> **Lightweight & no-compiler philosophy:** This tool is deliberately
+> minimalist. There is **no** build step, no `npm install`, no compiler, and no
+> external dependency. A single-file server runs on the built-in Python, with
+> vanilla JavaScript and locally vendored animation libraries — **no CDN or
+> network required**.
+
+---
+
+## 🖱️ Easy Setup & Usage (No technical knowledge needed)
+
+You don't need to know the Terminal. Three steps:
+
+1. **Download:** Click the green **`Code`** button at the top of this page →
+   **`Download ZIP`**.
+2. **Extract:** Double-click the downloaded ZIP; a folder is created.
+3. **Start:** Inside the folder, **right-click `CLICK_TO_START.command` → "Open"**,
+   then click **"Open"** again in the warning dialog.
+
+The dashboard opens automatically in your browser at `http://localhost:8080`. 🎉
+
+> **Why "right-click → Open" the first time?** macOS locks files downloaded from
+> the internet for security. Right-click → "Open" clears that lock once, safely.
+> After the first launch, a **plain double-click** is enough — the file clears
+> its own permissions and the macOS quarantine for you, with nothing to type in
+> the Terminal.
+>
+> To quit, just close the black Terminal window that opened.
+
+> **Note:** The tool only requires Python 3, which ships with modern macOS. If
+> it's missing, the Terminal window points you to `xcode-select --install`.
+
 ---
 
 ## ✨ Features
@@ -24,7 +55,12 @@ Clean Mac safely removes unnecessary data on macOS such as caches, logs, tempora
 
 ---
 
-## 🚀 Installation
+## 🧑‍💻 Advanced / Terminal Usage
+
+For those who prefer the Terminal. (The double-click method above does all of
+this in the background.)
+
+### Installation
 
 ```bash
 git clone https://github.com/<username>/apple-cleanup.git
@@ -32,17 +68,13 @@ cd apple-cleanup
 chmod +x clean_mac.sh
 ```
 
----
-
-## 📖 Usage
-
-### Terminal (interactive)
+### Interactive (terminal interface)
 
 ```bash
-# Run interactive cleanup (scans first, then prompts)
+# Scans first, then prompts for confirmation
 bash clean_mac.sh
 
-# Show help
+# Help
 bash clean_mac.sh --help
 ```
 
@@ -50,7 +82,13 @@ bash clean_mac.sh --help
 
 ```bash
 python3 web/server.py
-# Open your browser at http://localhost:8080
+# The browser opens automatically: http://localhost:8080
+```
+
+To prevent the browser from opening automatically:
+
+```bash
+APPLE_CLEANUP_OPEN_BROWSER=0 python3 web/server.py
 ```
 
 ---
@@ -85,12 +123,15 @@ The script targets a wide array of system and user items, categorized by safety 
 
 ```
 apple-cleanup/
-├── clean_mac.sh        # Main cleanup script
+├── CLICK_TO_START.command    # Double-click launcher (fixes perms/quarantine)
+├── Internal_Launcher.command # Background: runs the server
+├── clean_mac.sh              # Main cleanup script
 ├── web/
-│   ├── server.py       # Python web server for the dashboard
-│   ├── index.html      # Dashboard UI
-│   ├── style.css       # Styles
-│   └── script.js       # Frontend logic
+│   ├── server.py             # Python web server for the dashboard
+│   ├── index.html            # Dashboard UI
+│   ├── style.css             # Styles
+│   ├── script.js             # Frontend logic
+│   └── vendor/               # Vendored GSAP (no CDN/network)
 ├── README.md
 ├── LICENSE
 └── .gitignore
