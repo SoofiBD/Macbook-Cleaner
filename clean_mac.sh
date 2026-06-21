@@ -2601,7 +2601,7 @@ do_ops_json() {
       source=$(awk -F'\t' '{print $5}' <<<"$rest")
       dest=$(awk -F'\t' '{print $6}' <<<"$rest")
       category=$(awk -F'\t' '{print $7}' <<<"$rest")
-    else
+    elif [ "$nf" -eq 5 ]; then
       # legacy 5-col line: ts action bytes path category
       ts=$(awk -F'\t' '{print $1}' <<<"$rest")
       action=$(awk -F'\t' '{print $2}' <<<"$rest")
@@ -2609,6 +2609,8 @@ do_ops_json() {
       source=$(awk -F'\t' '{print $4}' <<<"$rest")
       category=$(awk -F'\t' '{print $5}' <<<"$rest")
       session="legacy"; dest=""
+    else
+      continue
     fi
     [ -z "$ts" ] && continue
     case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
@@ -2617,13 +2619,16 @@ do_ops_json() {
       local parent; parent="$(dirname "$source")"
       { [ ! -e "$source" ] || [ -d "$parent" ]; } && recoverable=true
     fi
-    local esc_src esc_dest esc_cat
+    local esc_src esc_dest esc_cat esc_session
     esc_src=$(json_escape_str "$source"); esc_dest=$(json_escape_str "$dest")
     esc_cat=$(json_escape_str "$category")
+    # Escape session before it enters the awk aggregation pipeline below,
+    # since awk can't call the bash json_escape_str helper itself.
+    esc_session=$(json_escape_str "$session")
     local item
     item="{\"id\":$id,\"source\":\"$esc_src\",\"trash_dest\":\"$esc_dest\",\"bytes\":${bytes:-0},\"category\":\"$esc_cat\",\"action\":\"$action\",\"recoverable\":$recoverable}"
     # Stash: SESSION<TAB>TS<TAB>BYTES<TAB>REC<TAB>ITEMJSON
-    printf '%s\t%s\t%s\t%s\t%s\n' "$session" "${ts:-0}" "${bytes:-0}" "$recoverable" "$item"
+    printf '%s\t%s\t%s\t%s\t%s\n' "$esc_session" "${ts:-0}" "${bytes:-0}" "$recoverable" "$item"
   done < <(awk '{printf "%d\t%s\n", NR, $0}' "$OPLOG_FILE") \
     | awk -F'\t' '
         { sess=$1; ts=$2; by=$3; rec=$4; item=$5;
