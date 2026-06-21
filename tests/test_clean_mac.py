@@ -212,3 +212,34 @@ def test_total_bytes_equals_in_total_sum(tmp_path):
         if info.get("in_total")
     )
     assert data["total_bytes"] == expected
+
+
+def _source_eval(expr: str) -> str:
+    """Source clean_mac.sh (main is guarded) and echo a shell expression."""
+    out = subprocess.run(
+        ["bash", "-c", f'source "{SCRIPT}" >/dev/null 2>&1; {expr}'],
+        capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    return out.stdout.strip()
+
+
+def test_safe_clean_ids_map_to_expected_numbers():
+    # The quick-clean set is keyed by stable category ids. This locks the
+    # id→display-number mapping so reordering CATEGORIES is caught instead of
+    # silently changing what gets cleaned (frontend index ↔ backend order).
+    nums = _source_eval('cat_nums_by_ids "${SAFE_CLEAN_IDS[@]}"').split()
+    assert nums == ["1", "2", "4", "5", "7", "8"], nums
+
+
+def test_category_registry_order_is_stable():
+    # Canonical CAT_IDS order. If this changes, frontend script.js CATEGORIES
+    # indices and any hardcoded numbers must be revisited together.
+    expected = [
+        "user_cache", "system_cache", "app_leftovers", "logs", "temp_files",
+        "developer", "trash", "browser_cache", "browser_full", "ios_backups",
+        "app_uninstaller", "mail_downloads", "diagnostic_reports",
+        "quicklook_cache", "saved_app_state", "other_trash", "project_artifacts",
+    ]
+    ids = _source_eval('printf "%s\\n" "${CAT_IDS[@]}"').splitlines()
+    assert ids == expected, ids

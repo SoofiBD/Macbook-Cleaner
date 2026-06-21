@@ -329,7 +329,13 @@ _PROJECT_ARTIFACT_NAMES = frozenset({
 
 
 def _validate_project_artifact(path: str) -> bool:
-    """Validate a project-artifact path before passing it to the script."""
+    """Validate a project-artifact path before passing it to the script.
+
+    This is a path-shape check only (home-agnostic, so it is unit-testable with
+    arbitrary paths). The runtime $HOME confinement and symlink-target guard are
+    enforced by bash _is_valid_project_artifact, which resolves against the real
+    home and follows the path before any deletion.
+    """
     return (
         isinstance(path, str)
         and path.startswith("/")
@@ -889,19 +895,10 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         msg = ""
         details = []
 
-        # If source in ("app_dir", "both"), we run clean_mac.sh FIRST
-        # to capture the bundle ID, delete the app, and clean leftovers.
-        if source in ("app_dir", "both"):
-            # Run clean_mac.sh category 10 (app_uninstaller)
-            data, script_err = self._run_script(["--clean-json", "10", "--app-uninstaller-sub", clean_target])
-            if script_err:
-                success = False
-                msg = f"Leftovers cleanup failed: {script_err}"
-            else:
-                details.append("Application files and leftovers deleted successfully.")
-
-        # If source is ("brew_cask", "both"), run brew uninstall --cask
-        if source in ("brew_cask", "both") and success:
+        # Homebrew MUST run first. `brew uninstall --cask` expects the .app
+        # bundle to still exist; if clean_mac.sh deletes it first, the cask
+        # uninstall fails. So: brew first, then residual-file cleanup.
+        if source in ("brew_cask", "both"):
             # `--` terminates option parsing so a package token can never be
             # interpreted by brew as a flag.
             cmd = ["brew", "uninstall", "--cask", "--", app_id]
@@ -912,7 +909,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             else:
                 details.append("Homebrew cask uninstalled successfully.")
 
-        elif source == "brew" and success:
+        elif source == "brew":
             cmd = ["brew", "uninstall", "--", app_id]
             ok, out, err_out = self._run_cmd(cmd)
             if not ok:
@@ -920,6 +917,17 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
                 msg = f"Homebrew formula uninstallation failed: {err_out or out}"
             else:
                 details.append("Homebrew formula uninstalled successfully.")
+
+        # Then run clean_mac.sh to remove any remaining .app bundle and clean
+        # leftovers. Skipped if the brew step above already failed.
+        if source in ("app_dir", "both") and success:
+            # Run clean_mac.sh category 10 (app_uninstaller)
+            data, script_err = self._run_script(["--clean-json", "10", "--app-uninstaller-sub", clean_target])
+            if script_err:
+                success = False
+                msg = f"Leftovers cleanup failed: {script_err}"
+            else:
+                details.append("Application files and leftovers deleted successfully.")
 
         if success:
             self._send_json({

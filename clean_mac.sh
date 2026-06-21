@@ -498,6 +498,19 @@ cat_index_by_id() {
   echo "-1"
 }
 
+# Canonical "safe" quick-clean set, expressed by stable ids (not positions) so
+# reordering the CATEGORIES registry can never silently change what gets cleaned.
+SAFE_CLEAN_IDS=(user_cache system_cache logs temp_files trash browser_cache)
+
+# ids → space-separated 1-based display numbers consumed by run_clean/selectors.
+cat_nums_by_ids() {
+  local id i
+  for id in "$@"; do
+    i=$(cat_index_by_id "$id")
+    [ "$i" -ge 0 ] && printf '%s\n' "$((i + 1))"
+  done
+}
+
 # ─── UI ──────────────────────────────────────────────────────────────────────
 header() {
   echo ""
@@ -518,7 +531,8 @@ err()     { echo -e "  ${RED}✗${NC}  $1" >&2; }
 # ─── Size Helpers ────────────────────────────────────────────────────────────
 format_bytes() {
   local b=$1
-  if   [ "$b" -ge 1073741824 ]; then printf "%.1f GB" "$(echo "scale=1; $b/1073741824" | bc)"
+  if   [ "$b" -ge 1099511627776 ]; then printf "%.1f TB" "$(echo "scale=1; $b/1099511627776" | bc)"
+  elif [ "$b" -ge 1073741824 ]; then printf "%.1f GB" "$(echo "scale=1; $b/1073741824" | bc)"
   elif [ "$b" -ge 1048576 ];    then printf "%.1f MB" "$(echo "scale=1; $b/1048576"    | bc)"
   elif [ "$b" -ge 1024 ];       then printf "%.1f KB" "$(echo "scale=1; $b/1024"       | bc)"
   else printf "%d B" "$b"; fi
@@ -616,26 +630,27 @@ confirm() {
 # Returns 0 on success, 1 on failure
 _trash_item() {
   local path="$1"
-  [ -e "$path" ] || return 0
-  local base; base=$(basename "$path")
-  # Tier 1: AppleScript (native Finder trash). Finder's trash is tied to the
-  # logged-in GUI session's real home directory, not an overridden $HOME, so
-  # only attempt it when $HOME matches the real account home (i.e. not under
-  # test isolation) -- otherwise go straight to the deterministic Tier 2 mv.
-  local _real_home; _real_home=$(eval echo "~$(id -un)" 2>/dev/null)
-  if [ -n "$_real_home" ] && [ "$_real_home" = "$HOME" ] \
-     && osascript -e 'tell application "Finder" to move POSIX file "'"$path"'" to trash' >/dev/null 2>&1; then
-    # Item lands at ~/.Trash/<base>; if renamed on collision, take newest match.
-    local dest="$HOME/.Trash/$base"
-    if [ ! -e "$dest" ]; then
-      dest=$(ls -dt "$HOME/.Trash/$base"* 2>/dev/null | head -n1) || dest=""
-    fi
-    echo "$dest"
+  # -L keeps broken symlinks (target gone, -e is false) in scope.
+  [ -e "$path" ] || [ -L "$path" ] || return 0
+
+  # Tier 1: AppleScript (native Finder trash with undo support).
+  # Pass the path as an argv item rather than interpolating it into the script
+  # source, so quotes/backslashes in a filename can't break or inject script.
+  if osascript -e 'on run argv' \
+               -e 'tell application "Finder" to move POSIX file (item 1 of argv) to trash' \
+               -e 'end run' "$path" >/dev/null 2>&1; then
     return 0
   fi
-  # Tier 2: manual mv with collision-safe naming
-  local dest="$HOME/.Trash/$base"
-  [ -e "$dest" ] && dest="$HOME/.Trash/${base}.$(date +%s)"
+
+  # Tier 2: Manual mv to ~/.Trash with collision-safe naming
+  local base dest
+  base=$(basename "$path")
+  dest="$HOME/.Trash/$base"
+  if [ -e "$dest" ]; then
+    # Append timestamp + pid + random so collisions within the same second
+    # (two identically-named items) don't overwrite each other.
+    dest="$HOME/.Trash/${base}.$(date +%s).$$.${RANDOM}"
+  fi
   if mv "$path" "$dest" 2>/dev/null; then
     echo "$dest"
     return 0
@@ -677,7 +692,8 @@ safe_rm() {
     info "$(L excluded): $label"
     return 0
   fi
-  [ -e "$path" ] || return 0
+  # -L keeps broken symlinks (target gone, -e is false) in scope.
+  [ -e "$path" ] || [ -L "$path" ] || return 0
   local sz_b; sz_b=$(get_size_bytes "$path")
   local sz_h; sz_h=$(format_bytes "$sz_b")
 
@@ -984,19 +1000,26 @@ scan_ios_backups() {
 
 scan_app_uninstaller() {
   local total=0
-  local app app_name s
-  while IFS= read -r -d '' app; do
-    app_name=$(basename "$app" .app)
-    local dir
-    for dir in \
-        "$HOME/Library/Application Support/$app_name" \
-        "$HOME/Library/Caches/$app_name"; do
-      [ -d "$dir" ] || continue
-      s=$(get_size_bytes "$dir") || s=0
-      total=$((total + s))
-    done
-  done < <(find /Applications -maxdepth 1 -name "*.app" -print0 2>/dev/null)
-  CAT_SIZES[10]=$total
+  local app app_name bundle_id s
+  # Mirror scan_app_uninstaller_subitems_json: scan both app dirs and use the
+  # same leftover-path set so the summary size matches the per-app breakdown.
+  local scan_dirs=("/Applications")
+  [ -d "$HOME/Applications" ] && scan_dirs+=("$HOME/Applications")
+  local d
+  for d in "${scan_dirs[@]}"; do
+    while IFS= read -r -d '' app; do
+      app_name=$(basename "$app" .app)
+      bundle_id=$(get_app_bundle_id "$app")
+      local dir
+      while IFS= read -r -d '' dir; do
+        [ -e "$dir" ] || continue
+        s=$(get_size_bytes "$dir") || s=0
+        total=$((total + s))
+      done < <(app_leftover_paths "$app_name" "$bundle_id")
+    done < <(find "$d" -maxdepth 1 -name "*.app" -print0 2>/dev/null)
+  done
+  local i; i=$(cat_index_by_id app_uninstaller)
+  CAT_SIZES[$i]=$total
 }
 
 scan_mail_downloads() {
@@ -1790,11 +1813,14 @@ clean_broken_symlinks_silent() {
     done < <(find "$dir" -maxdepth 3 -type l ! -e 2>/dev/null)
   done
 
+  # Route through safe_rm so deletions honour the exclusion list, protected-path
+  # guard, trash-first behaviour and the operation-log audit trail.
+  local _prev_cat="$_CURRENT_CATEGORY" _prev_sudo="$_CURRENT_NEEDS_SUDO"
+  _CURRENT_CATEGORY="developer"; _CURRENT_NEEDS_SUDO=0
   for link in ${broken_links[@]+"${broken_links[@]}"}; do
-    rm -f "$link" 2>/dev/null && {
-      TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-    }
+    safe_rm "$link" "Broken symlink: $link"
   done
+  _CURRENT_CATEGORY="$_prev_cat"; _CURRENT_NEEDS_SUDO="$_prev_sudo"
 }
 
 clean_broken_symlinks_interactive() {
@@ -2741,22 +2767,55 @@ do_purge_ram() {
 do_clean_launchagents() {
   JSON_MODE=true
   local removed=0
-  local errors=()
+  local err_msgs=()
   local dirs=(
     "$HOME/Library/LaunchAgents"
     "/Library/LaunchAgents"
     "/Library/LaunchDaemons"
   )
-  local d plist
+  # System dirs are root-owned. JSON mode has no interactive sudo prompt, so
+  # establish privilege non-interactively: already root, or passwordless sudo.
+  if [ "$(id -u)" -eq 0 ] || sudo -n true 2>/dev/null; then
+    SUDO_AVAILABLE=true
+  fi
+  _CURRENT_CATEGORY="launchagents"
+  local d plist out
   for d in "${dirs[@]}"; do
     [ -d "$d" ] || continue
+    # System-wide dirs need root; the home dir is trash-first/user-owned.
+    if [ "$d" = "$HOME/Library/LaunchAgents" ]; then
+      _CURRENT_NEEDS_SUDO=0
+    else
+      _CURRENT_NEEDS_SUDO=1
+    fi
+    # Without privilege, root-owned dirs can't be cleaned — report, don't fail
+    # silently with a bare rm that errors per file.
+    if [ "$_CURRENT_NEEDS_SUDO" -eq 1 ] && ! $SUDO_AVAILABLE; then
+      err_msgs+=("$d: skipped (requires root privileges)")
+      continue
+    fi
     while IFS= read -r -d '' plist; do
       if ! plutil -lint "$plist" &>/dev/null; then
-        rm -f "$plist" 2>/dev/null && removed=$((removed + 1)) || errors+=("$plist")
+        # Route through safe_rm for exclusion/protected-path guards, trash-first
+        # behaviour and the oplog audit trail. Capture its UI text so failures
+        # carry a reason while the endpoint still emits valid JSON.
+        if out=$(safe_rm "$plist" "LaunchAgent: $(basename "$plist")" 2>&1); then
+          removed=$((removed + 1))
+        else
+          out=$(printf '%s' "$out" | tr '\n' ' ' | sed $'s/\x1b\\[[0-9;]*m//g')
+          err_msgs+=("$(basename "$plist"): $out")
+        fi
       fi
     done < <(find "$d" -maxdepth 1 -name "*.plist" -print0 2>/dev/null)
   done
-  printf '{"success":true,"removed":%d,"errors":%d}\n' "$removed" "${#errors[@]}"
+  _CURRENT_CATEGORY=""; _CURRENT_NEEDS_SUDO=0
+  local errors_json="" e
+  for e in ${err_msgs[@]+"${err_msgs[@]}"}; do
+    [ -n "$errors_json" ] && errors_json+=","
+    errors_json+="\"$(json_escape_str "$e")\""
+  done
+  printf '{"success":true,"removed":%d,"errors":%d,"error_details":[%s]}\n' \
+    "$removed" "${#err_msgs[@]}" "$errors_json"
 }
 
 do_thin_snapshots_json() {
@@ -3151,13 +3210,14 @@ main() {
       echo ""
       warn "$(L safe_clean_info)"
       confirm "$(L continue_prompt)" || { echo ""; info "$(L cancelled)"; exit 0; }
-      run_clean 1 2 4 5 7 8
+      local quick_nums=(); read -ra quick_nums <<< "$(cat_nums_by_ids "${SAFE_CLEAN_IDS[@]}")"
+      run_clean "${quick_nums[@]}"
       ;;
     2)
       local raw_selection; raw_selection=$(category_selector)
       local selected_nums=()
       if [ "$raw_selection" = "all" ]; then
-        selected_nums=(1 2 4 5 7 8)
+        read -ra selected_nums <<< "$(cat_nums_by_ids "${SAFE_CLEAN_IDS[@]}")"
       else
         read -ra selected_nums <<< "$raw_selection"
       fi
