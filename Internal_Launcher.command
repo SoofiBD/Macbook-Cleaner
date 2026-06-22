@@ -25,5 +25,10 @@ echo "🍎 Starting Apple Cleanup...  http://localhost:${PORT}"
 echo "   Close this window or press Ctrl+C to stop."
 echo ""
 
-# Run the server (the browser is opened by server.py itself)
-exec python3 web/server.py
+# Capture everything to a log file next to this script so startup errors are
+# recoverable even after the window closes. `python3 -u` keeps output unbuffered
+# so the log is complete (and live) even if the server crashes.
+LOG_FILE="$(dirname "$0")/cleanup-log.txt"
+echo "   Log: ${LOG_FILE}"
+echo ""
+exec python3 -u web/server.py 2>&1 | tee "$LOG_FILE"

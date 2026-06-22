@@ -995,12 +995,33 @@ def _open_browser():
         pass  # Browser launch is best-effort; the server still runs.
 
 
-def main():
+def _bind_server():
+    """Bind the dashboard server, falling back to the next port if 8080 is
+    already taken by another app. The frontend uses relative URLs, so it works
+    on whatever port the page was actually served from. Returns the bound
+    server and updates the global PORT to match."""
+    global PORT
     # ThreadingHTTPServer keeps the dashboard responsive while a long scan or
     # cleanup runs; a plain single-threaded HTTPServer freezes for the whole
     # operation and looks like the server has died.
     http.server.ThreadingHTTPServer.allow_reuse_address = True
-    server = http.server.ThreadingHTTPServer((HOST, PORT), CleanupHandler)
+    last_err = None
+    for candidate in range(PORT, PORT + 10):
+        try:
+            server = http.server.ThreadingHTTPServer((HOST, candidate), CleanupHandler)
+            PORT = candidate
+            return server
+        except OSError as e:
+            last_err = e
+            continue
+    raise SystemExit(
+        f"ERROR: could not start the server — ports {PORT}-{PORT + 9} are all "
+        f"in use ({last_err}). Quit the app using one of those ports and try again."
+    )
+
+
+def main():
+    server = _bind_server()
     print(f"🍎 Apple Cleanup Dashboard v2.0.0")
     print(f"   http://localhost:{PORT}  (loopback only)")
     print(f"   Press Ctrl+C to stop\n")
