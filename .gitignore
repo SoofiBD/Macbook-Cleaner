@@ -3,3 +3,8 @@ __pycache__/
 .pytest_cache/
 .DS_Store
 docs/*
+# diagnostic / runtime artifacts
+cleanup-log.txt
+diagnose-log.txt
+scan-out.json
+scan-err.txt

@@ -416,6 +416,10 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _send_error_json(self, message, status=500):
+        # Surface the failure on the server console/log too — handlers swallow
+        # errors into JSON, so without this an API failure leaves no trace.
+        sys.stderr.write(f"[ERROR {status}] {self.path}: {message}\n")
+        sys.stderr.flush()
         self._send_json({"success": False, "error": message}, status)
 
     def _read_json_body(self) -> tuple:
