@@ -537,7 +537,10 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
 
     # ── API Handlers ────────────────────────────────────────
     def _handle_scan(self):
-        data, err = self._run_script(["--scan-json"])
+        # Scanning walks many large cache/log trees with `du`; on fuller or
+        # slower machines this easily exceeds the default 120s. Give it room
+        # so a legitimately slow scan doesn't surface as a server error.
+        data, err = self._run_script(["--scan-json"], timeout=600)
         if err:
             self._send_error_json(f"Scan error: {err}")
         else:
@@ -993,8 +996,11 @@ def _open_browser():
 
 
 def main():
-    http.server.HTTPServer.allow_reuse_address = True
-    server = http.server.HTTPServer((HOST, PORT), CleanupHandler)
+    # ThreadingHTTPServer keeps the dashboard responsive while a long scan or
+    # cleanup runs; a plain single-threaded HTTPServer freezes for the whole
+    # operation and looks like the server has died.
+    http.server.ThreadingHTTPServer.allow_reuse_address = True
+    server = http.server.ThreadingHTTPServer((HOST, PORT), CleanupHandler)
     print(f"🍎 Apple Cleanup Dashboard v2.0.0")
     print(f"   http://localhost:{PORT}  (loopback only)")
     print(f"   Press Ctrl+C to stop\n")
