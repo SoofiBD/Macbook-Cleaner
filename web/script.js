@@ -219,6 +219,7 @@
   /* ──────────────────────────────────────────────────────────
      Terminal log
      ────────────────────────────────────────────────────────── */
+  const TERM_MAX_LINES = 500;
   function termLog(msg, type = '') {
     const now = new Date();
     const time = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
@@ -235,6 +236,10 @@
     el.termBody.appendChild(line);
     el.termBody.scrollTop = el.termBody.scrollHeight;
     termLineCount++;
+    // Cap terminal lines to prevent unbounded memory growth
+    while (el.termBody.children.length > TERM_MAX_LINES) {
+      el.termBody.removeChild(el.termBody.firstChild);
+    }
     el.termCount.textContent = String(termLineCount);
   }
 
@@ -286,7 +291,7 @@
      Utilities
      ────────────────────────────────────────────────────────── */
   function formatBytes(bytes) {
-    if (!bytes || bytes === 0) return '0 B';
+    if (!bytes || bytes <= 0) return '0 B';
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
     const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(1024)));
     return (bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
@@ -686,17 +691,21 @@
     // Sync parent toggle with sub-items
     const parentCb = $('.switch input[type="checkbox"]', card);
     const subCbs = $$('input[type="checkbox"]', wrap);
+    // Abort previous listeners to prevent accumulation on re-scan
+    if (card._subAbort) card._subAbort.abort();
+    card._subAbort = new AbortController();
+    const sig = { signal: card._subAbort.signal };
     subCbs.forEach((scb) => {
       scb.addEventListener('change', (e) => {
         e.stopPropagation();
         const anyChecked = subCbs.some((cb) => cb.checked);
         parentCb.checked = anyChecked;
         card.classList.toggle('selected', anyChecked);
-      });
+      }, sig);
     });
     parentCb.addEventListener('change', () => {
       subCbs.forEach((scb) => (scb.checked = parentCb.checked));
-    });
+    }, sig);
     const anyChecked = subCbs.some((cb) => cb.checked);
     parentCb.checked = anyChecked;
     card.classList.toggle('selected', anyChecked);
@@ -737,7 +746,7 @@
 
     isLoading = true;
     setLoading(el.btnClean, true);
-    setLoading(el.btnScan, true);
+    el.btnScan.disabled = true;
     el.resultsPanel.hidden = true;
     el.hero.setAttribute('data-state', 'cleaning');
     el.heroEyebrow.textContent = 'Cleaning…';
@@ -799,6 +808,7 @@
       $$('.cat-size').forEach((s) => { s.textContent = '—'; });
       $$('.subitems').forEach((s) => s.remove());
       scanData = null;
+      filesSelected.clear();
 
       el.hero.setAttribute('data-state', 'idle');
       el.heroEyebrow.textContent = 'Cleanup complete · Scan again';
@@ -1095,10 +1105,11 @@
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !isLoading) {
+    const cleanupActive = document.getElementById('tab-cleanup')?.classList.contains('active');
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !isLoading && cleanupActive) {
       e.preventDefault(); handleScan();
     }
-    if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === '\n') && !el.btnClean.disabled) {
+    if ((e.metaKey || e.ctrlKey) && (e.key === 'Enter' || e.key === '\n') && !el.btnClean.disabled && cleanupActive) {
       e.preventDefault(); handleClean();
     }
   });
@@ -1156,7 +1167,7 @@
     });
     panel.querySelector('#tweaksClose').addEventListener('click', () => {
       panel.classList.remove('open');
-      try { window.parent.postMessage({ type: '__edit_mode_dismissed' }, '*'); } catch {}
+      try { window.parent.postMessage({ type: '__edit_mode_dismissed' }, window.location.origin); } catch {}
     });
     panel.querySelector('#tweaksTheme').addEventListener('click', toggleTheme);
 
@@ -1164,11 +1175,12 @@
 
     // Host-mode listeners (toggle visibility)
     window.addEventListener('message', (ev) => {
+      if (ev.origin !== window.location.origin) return;
       const d = ev.data || {};
       if (d.type === '__activate_edit_mode') panel.classList.add('open');
       if (d.type === '__deactivate_edit_mode') panel.classList.remove('open');
     });
-    try { window.parent.postMessage({ type: '__edit_mode_available' }, '*'); } catch {}
+    try { window.parent.postMessage({ type: '__edit_mode_available' }, window.location.origin); } catch {}
   }
   buildTweaks();
 
@@ -1304,7 +1316,7 @@
   if (undoListEl) {
     undoListEl.addEventListener('click', async (e) => {
       const btn = e.target.closest('.btn-restore-run');
-      if (!btn) return;
+      if (!btn || isLoading) return;
       btn.disabled = true;
       const sessionId = btn.dataset.session;
       try {
@@ -1508,7 +1520,13 @@
       }
     } catch (err) {
       termLog(`App scan error: ${err.message}`, 'error');
-      if (appsList) appsList.innerHTML = `<li class="apps-error">Error: ${err.message}</li>`;
+      if (appsList) {
+        const li = document.createElement('li');
+        li.className = 'apps-error';
+        li.textContent = 'Error: ' + err.message;
+        appsList.innerHTML = '';
+        appsList.appendChild(li);
+      }
       if (appsCount) appsCount.textContent = 'Error';
     }
   }

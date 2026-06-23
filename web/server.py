@@ -52,6 +52,8 @@ MAX_BODY_SIZE = 1 * 1024 * 1024  # 1,048,576 bytes
 # snapshot (at most once per hour), keep 90 days, and fit a least-squares line
 # to predict when the disk will fill.
 HISTORY_FILE = os.path.expanduser("~/.cache/apple-cleanup/usage_history.json")
+_history_lock = threading.Lock()
+_launch_agent_lock = threading.Lock()
 MAX_HISTORY_DAYS = 90
 SNAPSHOT_INTERVAL = 3600           # seconds between recorded snapshots
 FORECAST_HORIZON_DAYS = 365        # don't report a forecast beyond a year
@@ -165,7 +167,10 @@ def _host_only(value: str) -> str:
     value = value.strip().rstrip("/")
     # Bracketed IPv6 literal, optionally with :port
     if value.startswith("["):
-        return value[1:].split("]", 1)[0]
+        bracket_end = value.find("]")
+        if bracket_end != -1:
+            return value[1:bracket_end]
+        return value[1:]
     # host:port — split on the last colon only if it looks like a port
     if value.count(":") == 1:
         value = value.split(":", 1)[0]
@@ -290,6 +295,7 @@ _BROWSER_WHITELIST = frozenset({
 
 
 _SESSION_RE = re.compile(r"^[0-9A-Fa-f-]{8,40}$|^[0-9]{1,10}-[0-9]{1,12}$")
+_UUID_RE = re.compile(r'^[0-9A-Fa-f\-]{1,40}$')
 
 
 def _validate_session_id(s) -> bool:
@@ -350,6 +356,7 @@ def _validate_project_artifact(path: str) -> bool:
         isinstance(path, str)
         and path.startswith("/")
         and ".." not in path
+        and "," not in path
         and os.path.basename(path.rstrip("/")) in _PROJECT_ARTIFACT_NAMES
     )
 
@@ -359,6 +366,8 @@ def _normalize_bool_fields(data: dict) -> dict:
     Recursively normalize boolean string fields in scan JSON.
     Converts string "true"/"false" to Python bool True/False.
     Also ensures needs_sudo is always a proper bool.
+
+    NOTE: Mutates `data` in-place. Pass a copy if the original must be preserved.
     """
     if not isinstance(data, dict):
         return data
@@ -384,6 +393,10 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         sys.stderr.write(f"[server] {fmt % args}\n")
 
+    def setup(self):
+        super().setup()
+        self.connection.settimeout(30)
+
     # ── Security headers ────────────────────────────────────
     def _security_headers(self):
         # No wildcard CORS: the dashboard is served same-origin, so cross-origin
@@ -391,6 +404,10 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("X-Frame-Options", "DENY")
         self.send_header("Referrer-Policy", "no-referrer")
+        self.send_header(
+            "Content-Security-Policy",
+            "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'"
+        )
 
     def do_OPTIONS(self):
         # Same-origin only; no CORS preflight is honoured.
@@ -499,7 +516,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         except json.JSONDecodeError as e:
             return None, f"Invalid JSON from script: {e}"
         except Exception as e:
-            return None, str(e)
+            sys.stderr.write(f"[ERROR] _run_script: {e}\n")
+            return None, "Internal script error"
 
     # ── Routes ──────────────────────────────────────────────
     def do_GET(self):
@@ -611,8 +629,9 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         except OSError as e:
             self._send_error_json(f"Disk usage error: {e}")
             return
-        history = _record_snapshot(_load_history(), usage.used)
-        _save_history(history)
+        with _history_lock:
+            history = _record_snapshot(_load_history(), usage.used)
+            _save_history(history)
         data = compute_forecast(history, usage.total, usage.used)
         data["success"] = True
         data["total_bytes"] = usage.total
@@ -672,9 +691,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         # iOS backups sub-items
         ios_backups_selected = payload.get("ios_backups_selected", [])
         if ios_backups_selected and isinstance(ios_backups_selected, list):
-            _uuid_re = re.compile(r'^[0-9A-Fa-f\-]{1,40}$')
             safe_uuids = [u for u in ios_backups_selected
-                         if isinstance(u, str) and _uuid_re.match(u)]
+                         if isinstance(u, str) and _UUID_RE.match(u)]
             if safe_uuids:
                 args += ["--ios-backups-sub", ",".join(safe_uuids)]
 
@@ -752,14 +770,16 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             return
         enable = bool(payload.get("enabled", False))
         try:
-            if enable:
-                self._install_weekly_agent()
-                self._send_json({"enabled": True, "plist_path": str(LAUNCH_AGENT_PLIST)})
-            else:
-                self._remove_weekly_agent()
-                self._send_json({"enabled": False})
+            with _launch_agent_lock:
+                if enable:
+                    self._install_weekly_agent()
+                    self._send_json({"enabled": True, "plist_path": str(LAUNCH_AGENT_PLIST)})
+                else:
+                    self._remove_weekly_agent()
+                    self._send_json({"enabled": False})
         except Exception as e:
-            self._send_error_json(f"Schedule update failed: {e}")
+            sys.stderr.write(f"[ERROR] schedule-weekly: {e}\n")
+            self._send_error_json("Schedule update failed")
 
     def _install_weekly_agent(self):
         """Write the .plist and (best-effort) load it into launchd."""
@@ -811,7 +831,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             app_sizes = {}
             if app_paths:
                 try:
-                    res = subprocess.run(["du", "-sk"] + app_paths, capture_output=True, text=True, timeout=10)
+                    res = subprocess.run(["du", "-sk", "--"] + app_paths, capture_output=True, text=True, timeout=10)
                     if res.returncode == 0:
                         for line in res.stdout.splitlines():
                             parts = line.split('\t')
@@ -822,7 +842,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
 
             # 2. Gather Homebrew casks
             casks = []
-            if subprocess.run(["which", "brew"], capture_output=True).returncode == 0:
+            if shutil.which("brew"):
                 try:
                     res = subprocess.run(["brew", "list", "--cask"], capture_output=True, text=True, timeout=10)
                     if res.returncode == 0:
@@ -920,7 +940,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
                         subdirs = [d for d in os.listdir(cpath) if os.path.isdir(os.path.join(cpath, d))]
                         if subdirs:
                             version = subdirs[0]
-                        res = subprocess.run(["du", "-sk", cpath], capture_output=True, text=True, timeout=5)
+                        res = subprocess.run(["du", "-sk", "--", cpath], capture_output=True, text=True, timeout=5)
                         if res.returncode == 0:
                             size = int(res.stdout.split()[0]) * 1024
                     except Exception:
@@ -940,7 +960,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             apps_list.sort(key=lambda x: x["name"].lower())
             self._send_json({"success": True, "apps": apps_list})
         except Exception as e:
-            self._send_error_json(f"Failed to list applications: {e}", 500)
+            sys.stderr.write(f"[ERROR] _handle_apps: {e}\n")
+            self._send_error_json("Failed to list applications", 500)
 
     def _handle_uninstall(self):
         payload, err = self._read_json_body()
@@ -1050,7 +1071,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
-            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Cache-Control", "no-store, must-revalidate")
             self._security_headers()
             self.end_headers()
             self.wfile.write(data)

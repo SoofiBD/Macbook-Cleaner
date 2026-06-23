@@ -311,10 +311,6 @@ class TestTokenCompare(unittest.TestCase):
         self.assertFalse(self.v(""))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TestHistoryRoute(unittest.TestCase):
     """GET /api/history shells out to clean_mac.sh --history-json and returns a list."""
 
@@ -385,3 +381,13 @@ class TestValidateItemIds(unittest.TestCase):
         self.assertFalse(self.v([-1]))
         self.assertFalse(self.v([]))
         self.assertFalse(self.v("notalist"))
+
+    def test_blocks_booleans(self):
+        # bool is subclass of int in Python; must be rejected
+        self.assertFalse(self.v([True]))
+        self.assertFalse(self.v([False]))
+        self.assertFalse(self.v([1, True, 2]))
+
+
+if __name__ == "__main__":
+    unittest.main()

@@ -367,14 +367,18 @@ _is_excluded() {
   [ -n "$EXCLUDE_RAW" ] || return 1
   local oldIFS="$IFS"; IFS=':'
   local pat
+  # Disable globbing so patterns aren't expanded against CWD. Remember whether
+  # noglob was already set so we don't clobber a caller that relies on it.
+  local _had_noglob=0; case $- in *f*) _had_noglob=1 ;; esac
+  set -f
   for pat in $EXCLUDE_RAW; do
     [ -n "$pat" ] || continue
-    # Unquoted $pat in case enables glob matching; $pat/* covers descendants.
     case "$path" in
-      $pat|$pat/*) IFS="$oldIFS"; return 0 ;;
+      $pat|$pat/*) IFS="$oldIFS"; [ "$_had_noglob" -eq 1 ] || set +f; return 0 ;;
     esac
   done
   IFS="$oldIFS"
+  [ "$_had_noglob" -eq 1 ] || set +f
   return 1
 }
 
@@ -808,15 +812,21 @@ safe_rm_contents() {
   else
     # Trash-first: move each child item to trash individually
     local trashed_any=false
-    local child
+    local child _td
     while IFS= read -r -d '' child; do
-      _trash_item "$child" >/dev/null && trashed_any=true
+      # Capture size BEFORE trashing; afterwards the child is gone and any size
+      # read returns 0. Use get_size_bytes so files (not just dirs) are measured.
+      local child_sz; child_sz=$(get_size_bytes "$child")
+      _td="$(_trash_item "$child")"
+      if [ -n "$_td" ] || [ ! -e "$child" ]; then
+        trashed_any=true
+        oplog_record "trash" "$child_sz" "$child" "$_td" "$_CURRENT_CATEGORY"
+      fi
     done < <(find "$path" -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
     if $trashed_any; then
       success "$label: ${BOLD}${sz_h}${NC} $(L trashed)"
       TOTAL_FREED=$((TOTAL_FREED + sz_b))
       TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-      oplog_record "trash" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
     fi
   fi
 }
@@ -1143,6 +1153,7 @@ clean_system_cache() {
   header "$(L hdr_system_cache)"
   local item
   while IFS= read -r -d '' item; do
+    _is_excluded "$item" && continue
     local sz_b; sz_b=$(sudo du -sk "$item" 2>/dev/null | awk '{print $1*1024}') || continue
     [ "$sz_b" -le 0 ] 2>/dev/null && continue
     local sz_h; sz_h=$(format_bytes "$sz_b")
@@ -1162,6 +1173,7 @@ clean_logs() {
     _CURRENT_NEEDS_SUDO=1
     local item
     while IFS= read -r -d '' item; do
+      _is_excluded "$item" && continue
       local sz_b; sz_b=$(sudo du -sk "$item" 2>/dev/null | awk '{print $1*1024}') || continue
       [ "$sz_b" -le 0 ] 2>/dev/null && continue
       local sz_h; sz_h=$(format_bytes "$sz_b")
@@ -1508,6 +1520,12 @@ clean_app_leftovers() {
     for d in "${parsed_dirs[@]}"; do
       d="${d## }"; d="${d%% }"
       [ -z "$d" ] && continue
+      case "$d" in
+        */*|*..*)
+          err "$(L invalid_path_traversal): $d"
+          continue
+          ;;
+      esac
       # Security: only ~/Library/Application Support subdirs
       local full_path="$HOME/Library/Application Support/$d"
       if [ -d "$full_path" ]; then
@@ -1848,7 +1866,7 @@ clean_broken_symlinks_silent() {
   # guard, trash-first behaviour and the operation-log audit trail.
   local _prev_cat="$_CURRENT_CATEGORY" _prev_sudo="$_CURRENT_NEEDS_SUDO"
   _CURRENT_CATEGORY="developer"; _CURRENT_NEEDS_SUDO=0
-  for link in ${broken_links[@]+"${broken_links[@]}"}; do
+  for link in "${broken_links[@]}"; do
     safe_rm "$link" "Broken symlink: $link"
   done
   _CURRENT_CATEGORY="$_prev_cat"; _CURRENT_NEEDS_SUDO="$_prev_sudo"
@@ -1881,17 +1899,15 @@ clean_broken_symlinks_interactive() {
   echo ""
   warn "$(L broken_links_count) (${#broken_links[@]}):"
   local link
-  for link in ${broken_links[@]+"${broken_links[@]}"}; do
+  for link in "${broken_links[@]}"; do
     printf "  ${DIM}  %s → %s${NC}\n" "$link" "$(readlink "$link" 2>/dev/null || echo '?')"
   done
   echo ""
 
   if confirm "$(L delete_broken_q)"; then
-    for link in ${broken_links[@]+"${broken_links[@]}"}; do
-      rm -f "$link" 2>/dev/null && {
-        success "$(basename "$link") $(L deleted)"
-        TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-      } || err "$(basename "$link") $(L delete_failed)"
+    for link in "${broken_links[@]}"; do
+      _is_excluded "$link" && continue
+      safe_rm "$link" "Broken: $(basename "$link")"
     done
   fi
 }
@@ -1990,7 +2006,7 @@ do_history_json() {
         "$ts" "$(json_escape_str "$action")" "$bytes" \
         "$(json_escape_str "$size_h")" "$(json_escape_str "$path")" \
         "$(json_escape_str "${category:-}")" "$recoverable"
-    done < <(tail -r "$OPLOG_FILE" 2>/dev/null)
+    done < <(tail -r "$OPLOG_FILE" 2>/dev/null)  # BSD-only: reverse lines (macOS target)
   fi
   echo "]"
 }
@@ -2029,7 +2045,7 @@ do_history() {
     tag="$action"
     [ "$action" = "trash" ] && tag="trash↺"
     printf "  %-19s  %-9s  %-10s  %-14s  %s\n" "$when" "$tag" "$size_h" "${category:-}" "$path"
-  done < <(tail -r "$OPLOG_FILE" 2>/dev/null)
+  done < <(tail -r "$OPLOG_FILE" 2>/dev/null)  # BSD-only: reverse lines (macOS target)
 }
 
 scan_app_leftovers_subitems_json() {
@@ -2762,10 +2778,16 @@ do_restore_json() {
     if [ ! -d "$parent" ]; then
       skipped="$skipped${skipped:+,}{\"source\":\"$esc_src\",\"reason\":\"parent_missing\"}"; continue
     fi
-    # Collision -> rename
+    # Collision -> rename with counter to prevent cascading suffixes
     local target="$source" reason="ok"
     if [ -e "$source" ]; then
-      target="$source (restored)"; reason="renamed"
+      local counter=1
+      target="$source (restored)"
+      while [ -e "$target" ]; do
+        target="$source (restored $counter)"
+        counter=$((counter + 1))
+      done
+      reason="renamed"
     fi
     if mv "$dest" "$target" 2>/dev/null; then
       oplog_record "restore" "$bytes" "$target" "" "$category"
@@ -2845,7 +2867,7 @@ do_clean_launchagents() {
   done
   _CURRENT_CATEGORY=""; _CURRENT_NEEDS_SUDO=0
   local errors_json="" e
-  for e in ${err_msgs[@]+"${err_msgs[@]}"}; do
+  for e in "${err_msgs[@]}"; do
     [ -n "$errors_json" ] && errors_json+=","
     errors_json+="\"$(json_escape_str "$e")\""
   done
@@ -3046,7 +3068,7 @@ do_clean_json() {
   echo '  "details": ['
 
   local j=0
-  for entry in ${CLEAN_RESULTS[@]+"${CLEAN_RESULTS[@]}"}; do
+  for entry in "${CLEAN_RESULTS[@]}"; do
     IFS='|' read -r cat_id freed freed_h status <<< "$entry"
     local comma=","
     [ $((j + 1)) -eq ${#CLEAN_RESULTS[@]} ] && comma=""
@@ -3080,6 +3102,7 @@ main() {
     case "${args[$i]}" in
       --lang)
         i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --lang"; exit 1; }
         LANG_KEY="${args[$i]}"
         ;;
       --scan-json)
@@ -3104,6 +3127,7 @@ main() {
         ;;
       --clean-json)
         i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --clean-json"; exit 1; }
         clean_csv="${args[$i]}"
         ;;
       --clean-safe-json)
@@ -3115,26 +3139,32 @@ main() {
         ;;
       --app-leftovers)
         i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --app-leftovers"; exit 1; }
         APP_LEFTOVERS_CLEAN="${args[$i]}"
         ;;
       --browser-full-sub)
         i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --browser-full-sub"; exit 1; }
         BROWSER_FULL_CLEAN="${args[$i]}"
         ;;
       --developer-sub)
         i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --developer-sub"; exit 1; }
         DEVELOPER_CLEAN="${args[$i]}"
         ;;
       --ios-backups-sub)
         i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --ios-backups-sub"; exit 1; }
         IOS_BACKUPS_CLEAN="${args[$i]}"
         ;;
       --app-uninstaller-sub)
         i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --app-uninstaller-sub"; exit 1; }
         APP_UNINSTALLER_CLEAN="${args[$i]}"
         ;;
       --project-artifact-sub)
         i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --project-artifact-sub"; exit 1; }
         PROJECT_ARTIFACT_CLEAN="${args[$i]}"
         ;;
       --__noop)
@@ -3150,10 +3180,14 @@ main() {
         exit 0
         ;;
       --restore-session)
-        i=$((i + 1)); do_restore_json session "${args[$i]}"; exit 0
+        i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --restore-session"; exit 1; }
+        do_restore_json session "${args[$i]}"; exit 0
         ;;
       --restore-items)
-        i=$((i + 1)); do_restore_json items "${args[$i]}"; exit 0
+        i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --restore-items"; exit 1; }
+        do_restore_json items "${args[$i]}"; exit 0
         ;;
       --purge-ram)
         do_purge_ram
