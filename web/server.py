@@ -36,6 +36,14 @@ PORT = 8080
 WEB_DIR = Path(__file__).parent.resolve()
 SCRIPT_PATH = (WEB_DIR.parent / "clean_mac.sh").resolve()
 
+# ── Weekly automatic cleanup (launchd) ───────────────────────────────────────
+# A user LaunchAgent that runs the no-sudo safe cleanup once a week. It runs as
+# the user with no password prompt, so the agent invokes --clean-safe-json which
+# itself filters out any sudo categories (see cat_nosudo_safe_nums in the script).
+LAUNCH_AGENT_LABEL = "com.cleanmac.weeklycleanup"
+LAUNCH_AGENTS_DIR = Path(os.path.expanduser("~/Library/LaunchAgents"))
+LAUNCH_AGENT_PLIST = LAUNCH_AGENTS_DIR / f"{LAUNCH_AGENT_LABEL}.plist"
+
 # Maximum allowed request body size (1 MB)
 MAX_BODY_SIZE = 1 * 1024 * 1024  # 1,048,576 bytes
 
@@ -263,6 +271,8 @@ _DEVELOPER_WHITELIST = frozenset({
     "puppeteer_cache",     # Puppeteer browser binaries
     "prisma_cache",        # Prisma engine binaries
     "huggingface_cache",   # HuggingFace model cache (caution: large re-download)
+    "ollama_models",       # Ollama local LLM model blobs (re-pulled on next run)
+    "lm_studio",           # LM Studio app cache / downloaded models
 })
 
 # Browser key whitelist — MUST be 100% in sync with clean_mac.sh
@@ -511,6 +521,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             self._handle_history()
         elif path == "/api/operations":
             self._handle_operations()
+        elif path == "/api/schedule-status":
+            self._handle_schedule_status()
         else:
             self._serve_static(path)
 
@@ -536,6 +548,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             self._handle_uninstall()
         elif parsed.path == "/api/restore":
             self._handle_restore()
+        elif parsed.path == "/api/schedule-weekly":
+            self._handle_schedule_weekly()
         else:
             self._send_error_json("Not found", 404)
 
@@ -720,6 +734,65 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             self._send_error_json(f"Snapshot thinning error: {err}")
         else:
             self._send_json(data)
+
+    # ── Weekly automatic cleanup (launchd) ──────────────────
+    def _handle_schedule_status(self):
+        """Report whether the weekly cleanup LaunchAgent is installed."""
+        self._send_json({
+            "enabled": LAUNCH_AGENT_PLIST.exists(),
+            "label": LAUNCH_AGENT_LABEL,
+            "plist_path": str(LAUNCH_AGENT_PLIST),
+        })
+
+    def _handle_schedule_weekly(self):
+        """Enable/disable the weekly cleanup by writing/removing a LaunchAgent."""
+        payload, err = self._read_json_body()
+        if err:
+            self._send_error_json(err, 400)
+            return
+        enable = bool(payload.get("enabled", False))
+        try:
+            if enable:
+                self._install_weekly_agent()
+                self._send_json({"enabled": True, "plist_path": str(LAUNCH_AGENT_PLIST)})
+            else:
+                self._remove_weekly_agent()
+                self._send_json({"enabled": False})
+        except Exception as e:
+            self._send_error_json(f"Schedule update failed: {e}")
+
+    def _install_weekly_agent(self):
+        """Write the .plist and (best-effort) load it into launchd."""
+        LAUNCH_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+        plist = {
+            "Label": LAUNCH_AGENT_LABEL,
+            # Runs the script's own no-sudo safe cleanup; the script decides
+            # which categories are safe to clean unattended.
+            "ProgramArguments": ["/bin/bash", str(SCRIPT_PATH), "--clean-safe-json"],
+            # Sunday 03:00 weekly.
+            "StartCalendarInterval": {"Weekday": 0, "Hour": 3, "Minute": 0},
+            "RunAtLoad": False,
+            "ProcessType": "Background",
+            "StandardOutPath": os.path.expanduser(
+                "~/.cache/apple-cleanup/weekly-cleanup.log"),
+            "StandardErrorPath": os.path.expanduser(
+                "~/.cache/apple-cleanup/weekly-cleanup.log"),
+        }
+        os.makedirs(os.path.expanduser("~/.cache/apple-cleanup"), exist_ok=True)
+        with open(LAUNCH_AGENT_PLIST, "wb") as f:
+            plistlib.dump(plist, f)
+        # Reload so changes take effect now; ignore failures (e.g. headless).
+        subprocess.run(["launchctl", "unload", str(LAUNCH_AGENT_PLIST)],
+                       capture_output=True, timeout=15)
+        subprocess.run(["launchctl", "load", str(LAUNCH_AGENT_PLIST)],
+                       capture_output=True, timeout=15)
+
+    def _remove_weekly_agent(self):
+        """Unload and delete the LaunchAgent plist if present."""
+        if LAUNCH_AGENT_PLIST.exists():
+            subprocess.run(["launchctl", "unload", str(LAUNCH_AGENT_PLIST)],
+                           capture_output=True, timeout=15)
+            LAUNCH_AGENT_PLIST.unlink()
 
     def _run_cmd(self, cmd, timeout=60):
         try:

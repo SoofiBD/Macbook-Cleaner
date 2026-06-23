@@ -297,6 +297,18 @@
       </ul>
     </section>
 
+    <!-- ═══ Disk space treemap ═══ -->
+    <section class="section" id="treemapSection" hidden>
+      <div class="section-head">
+        <div class="section-titleblock">
+          <h2 class="section-title">Space Map</h2>
+          <span class="section-sub">What's taking up the most space</span>
+        </div>
+      </div>
+      <div class="treemap-wrap" id="treemap" role="img"
+           aria-label="Treemap of scanned categories by size"></div>
+    </section>
+
     <!-- ═══ Results panel ═══ -->
     <section class="results" id="resultsPanel" hidden>
       <div class="results-head">
@@ -384,6 +396,19 @@
             <button class="btn btn-ghost btn-sm" id="btnThinSnapshots" type="button">
               <span class="spinner" aria-hidden="true"></span>
               <span class="btn-text">Thin</span>
+            </button>
+          </div>
+        </li>
+        <li class="cat cat-maint" id="weeklyCleanCard">
+          <div class="cat-row cat-row-static">
+            <span class="cat-ic"><svg class="ic"><use href="#i-agent"/></svg></span>
+            <span class="cat-meta">
+              <span class="cat-name">Weekly Automatic Cleanup</span>
+              <span class="cat-desc">Runs the safe cleanup every Sunday at 03:00 via launchd. No password needed.</span>
+            </span>
+            <button class="btn btn-ghost btn-sm" id="btnWeeklyClean" type="button" aria-pressed="false">
+              <span class="spinner" aria-hidden="true"></span>
+              <span class="btn-text">Enable</span>
             </button>
           </div>
         </li>

@@ -1399,3 +1399,41 @@ a { color: inherit; text-decoration: none; }
   .history-row { grid-template-columns: 1fr auto; }
   .history-when, .history-cat { display: none; }
 }
+
+/* ─── Disk space treemap ─────────────────────────────────────────────────── */
+.treemap-wrap {
+  position: relative;
+  width: 100%;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--border-2);
+}
+.tm-cell {
+  position: absolute;
+  border-radius: 6px;
+  padding: 8px 10px;
+  box-sizing: border-box;
+  color: var(--text-on-acc);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  cursor: default;
+  will-change: transform, opacity;
+  transition: filter .15s ease, transform .15s ease;
+}
+.tm-cell:hover { filter: brightness(1.08); transform: translateZ(0) scale(1.012); }
+.tm-name {
+  font-weight: 600;
+  font-size: 12.5px;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  text-shadow: 0 1px 2px rgba(0,0,0,.35);
+}
+.tm-size {
+  font-size: 11px;
+  opacity: .92;
+  text-shadow: 0 1px 2px rgba(0,0,0,.35);
+}

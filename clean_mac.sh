@@ -401,7 +401,7 @@ _PROJECT_ARTIFACT_MIN_BYTES=10485760  # only surface artifacts > 10 MB
 
 # ─── Developer sub-item whitelist (for case-validation) ──────────────────────
 # Must be kept 100% in sync with server.py _DEVELOPER_WHITELIST
-_VALID_DEVELOPER_KEYS="derived_data|broken_links|brew_cache|docker_prune|npm_cache|pip_cache|device_support|coresim_caches|xcode_archives|cocoapods_cache|pnpm_cache|yarn_cache|gradle_cache|maven_repo|simctl_unavailable|xcode_products|simulator_logs|simulator_devices|font_caches|brew_cleanup|swift_pm_cache|xcode_logs|xcode_previews|carthage_cache|bun_cache|deno_cache|conda_pkgs|uv_cache|poetry_cache|go_modules|cargo_registry|composer_cache|gradle_wrapper|sbt_ivy_cache|bazel_cache|flutter_pub_cache|jetbrains_cache|playwright_cache|puppeteer_cache|prisma_cache|huggingface_cache"
+_VALID_DEVELOPER_KEYS="derived_data|broken_links|brew_cache|docker_prune|npm_cache|pip_cache|device_support|coresim_caches|xcode_archives|cocoapods_cache|pnpm_cache|yarn_cache|gradle_cache|maven_repo|simctl_unavailable|xcode_products|simulator_logs|simulator_devices|font_caches|brew_cleanup|swift_pm_cache|xcode_logs|xcode_previews|carthage_cache|bun_cache|deno_cache|conda_pkgs|uv_cache|poetry_cache|go_modules|cargo_registry|composer_cache|gradle_wrapper|sbt_ivy_cache|bazel_cache|flutter_pub_cache|jetbrains_cache|playwright_cache|puppeteer_cache|prisma_cache|huggingface_cache|ollama_models|lm_studio"
 
 # ─── Browser key whitelist ───────────────────────────────────────────────────
 # Must be kept 100% in sync with server.py _BROWSER_WHITELIST
@@ -515,6 +515,19 @@ cat_nums_by_ids() {
   for id in "$@"; do
     i=$(cat_index_by_id "$id")
     [ "$i" -ge 0 ] && printf '%s\n' "$((i + 1))"
+  done
+}
+
+# Safe-clean set minus any category that requires sudo. The scheduled LaunchAgent
+# runs as the user with no password prompt, so sudo categories would silently
+# fail — this filter guarantees the weekly run always completes fully. Emits
+# 1-based display numbers.
+cat_nosudo_safe_nums() {
+  local id i
+  for id in "${SAFE_CLEAN_IDS[@]}"; do
+    i=$(cat_index_by_id "$id")
+    [ "$i" -ge 0 ] || continue
+    [ "${CAT_NEEDS_SUDO[$i]}" -eq 0 ] && printf '%s\n' "$((i + 1))"
   done
 }
 
@@ -1786,6 +1799,13 @@ clean_developer() {
         huggingface_cache)
           safe_rm_contents "$HOME/.cache/huggingface" "HuggingFace Cache"
           ;;
+        ollama_models)
+          # Clear cached/broken model blobs; Ollama re-pulls on next run.
+          safe_rm_contents "$HOME/.ollama/models" "Ollama Models"
+          ;;
+        lm_studio)
+          safe_rm_contents "$HOME/Library/Application Support/LM-Studio" "LM Studio Cache"
+          ;;
         *)
           # Unknown key — warn and skip (never silently swallow)
           warn "$(L unknown_dev_key): '$item'"
@@ -2291,6 +2311,10 @@ scan_developer_subitems_json() {
     "$HOME/.cache/prisma" "safe"
   emit_dev_subitem "huggingface_cache" "HuggingFace Cache" \
     "$HOME/.cache/huggingface" "caution"
+  emit_dev_subitem "ollama_models" "Ollama Models" \
+    "$HOME/.ollama/models" "caution"
+  emit_dev_subitem "lm_studio" "LM Studio Cache" \
+    "$HOME/Library/Application Support/LM-Studio" "caution"
 }
 
 scan_browser_full_subitems_json() {
@@ -3081,6 +3105,13 @@ main() {
       --clean-json)
         i=$((i + 1))
         clean_csv="${args[$i]}"
+        ;;
+      --clean-safe-json)
+        # Non-interactive scheduled cleanup: clean only the no-sudo safe set.
+        # Used by the weekly LaunchAgent installed from the dashboard.
+        local _safe_nums; _safe_nums=$(cat_nosudo_safe_nums | tr '\n' ',' | sed 's/,$//')
+        do_clean_json "$_safe_nums"
+        exit 0
         ;;
       --app-leftovers)
         i=$((i + 1))

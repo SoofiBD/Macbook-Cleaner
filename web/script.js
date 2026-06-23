@@ -134,6 +134,8 @@
     heroBar:       $('#heroBar'),
     heroBarTrack:  $('#heroBarTrack'),
     heroBarLegend: $('#heroBarLegend'),
+    treemap:        $('#treemap'),
+    treemapSection: $('#treemapSection'),
 
     btnScan:       $('#btnScan'),
     btnClean:      $('#btnClean'),
@@ -158,6 +160,7 @@
     btnPurgeRam:    $('#btnPurgeRam'),
     btnLaunchAgents: $('#btnLaunchAgents'),
     btnThinSnapshots: $('#btnThinSnapshots'),
+    btnWeeklyClean: $('#btnWeeklyClean'),
     categoryCount: $('#categoryCount'),
     catList:       $('#catList'),
   };
@@ -493,6 +496,9 @@
 
       // Hero number + stacked bar
       revealHeroResult(scan, totalBytes);
+
+      // Interactive space map
+      renderTreemap(scan);
 
       el.heroEyebrow.textContent = `Scan complete · ${data.total_human || formatBytes(totalBytes)} can be cleaned`;
       el.hero.setAttribute('data-state', 'scanned');
@@ -902,6 +908,177 @@
   }
 
   /* ──────────────────────────────────────────────────────────
+     Disk space treemap (vanilla JS + local GSAP)
+     ────────────────────────────────────────────────────────── */
+  function buildTreemapData(scan) {
+    return Object.entries(scan)
+      .filter(([, v]) => (v.size_bytes || 0) > 0)
+      .map(([key, v]) => ({
+        key,
+        name: CAT_BY_KEY[key]?.name || key,
+        value: v.size_bytes,
+        human: v.size_human || formatBytes(v.size_bytes),
+        color: accentByKey[key] || '#8a8f98',
+      }))
+      .sort((a, b) => b.value - a.value);
+  }
+
+  // Worst aspect ratio of a row laid against a strip of length `side`.
+  function tmWorstRatio(row, side) {
+    let sum = 0, max = -Infinity, min = Infinity;
+    for (const n of row) {
+      sum += n.area;
+      if (n.area > max) max = n.area;
+      if (n.area < min) min = n.area;
+    }
+    const s2 = sum * sum, side2 = side * side;
+    return Math.max((side2 * max) / s2, s2 / (side2 * min));
+  }
+
+  // Squarified treemap (Bruls, Huizing & van Wijk). Returns positioned cells.
+  function squarify(data, x, y, w, h) {
+    const total = data.reduce((s, d) => s + d.value, 0);
+    if (total <= 0 || w <= 0 || h <= 0) return [];
+    const area = w * h;
+    const nodes = data.map((d) => ({ ...d, area: (d.value / total) * area }));
+
+    const out = [];
+    let rx = x, ry = y, rw = w, rh = h, i = 0;
+    while (i < nodes.length) {
+      const side = Math.min(rw, rh);
+      let row = [nodes[i]], j = i + 1;
+      while (j < nodes.length) {
+        const next = row.concat(nodes[j]);
+        if (tmWorstRatio(next, side) <= tmWorstRatio(row, side)) {
+          row = next; j++;
+        } else break;
+      }
+      const rowArea = row.reduce((s, n) => s + n.area, 0);
+      if (rw >= rh) {                       // vertical strip on the left
+        const stripW = rowArea / rh;
+        let oy = ry;
+        for (const n of row) {
+          const cellH = n.area / stripW;
+          out.push({ ...n, x: rx, y: oy, w: stripW, h: cellH });
+          oy += cellH;
+        }
+        rx += stripW; rw -= stripW;
+      } else {                              // horizontal strip on top
+        const stripH = rowArea / rw;
+        let ox = rx;
+        for (const n of row) {
+          const cellW = n.area / stripH;
+          out.push({ ...n, x: ox, y: ry, w: cellW, h: stripH });
+          ox += cellW;
+        }
+        ry += stripH; rh -= stripH;
+      }
+      i = j;
+    }
+    return out;
+  }
+
+  function renderTreemap(scan) {
+    const host = el.treemap;
+    if (!host) return;
+    const data = buildTreemapData(scan);
+    host.innerHTML = '';
+    if (!data.length) {
+      if (el.treemapSection) el.treemapSection.hidden = true;
+      return;
+    }
+    if (el.treemapSection) el.treemapSection.hidden = false;
+
+    const W = host.clientWidth || 720;
+    const H = Math.max(280, Math.round(W * 0.5));
+    host.style.height = H + 'px';
+
+    const cells = squarify(data, 0, 0, W, H);
+    const frag = document.createDocumentFragment();
+    const nodes = [];
+    for (const c of cells) {
+      const div = document.createElement('div');
+      div.className = 'tm-cell';
+      div.style.left = c.x + 'px';
+      div.style.top = c.y + 'px';
+      div.style.width = Math.max(0, c.w - 3) + 'px';
+      div.style.height = Math.max(0, c.h - 3) + 'px';
+      div.style.background = c.color;
+      div.title = `${c.name} · ${c.human}`;
+      if (c.w > 56 && c.h > 32) {
+        div.innerHTML =
+          `<span class="tm-name">${escapeHtml(c.name)}</span>` +
+          `<span class="tm-size">${escapeHtml(c.human)}</span>`;
+      }
+      frag.appendChild(div);
+      nodes.push(div);
+    }
+    host.appendChild(frag);
+
+    if (window.gsap) {
+      window.gsap.from(nodes, {
+        duration: 0.5,
+        opacity: 0,
+        scale: 0.6,
+        transformOrigin: '50% 50%',
+        ease: 'power2.out',
+        stagger: { each: 0.03, from: 'start' },
+      });
+    }
+  }
+
+  // Re-layout on resize (debounced) so the map stays crisp.
+  let _tmResize;
+  window.addEventListener('resize', () => {
+    if (!scanData?.scan || el.treemapSection?.hidden) return;
+    clearTimeout(_tmResize);
+    _tmResize = setTimeout(() => renderTreemap(scanData.scan), 150);
+  });
+
+  /* ──────────────────────────────────────────────────────────
+     Weekly automatic cleanup (launchd)
+     ────────────────────────────────────────────────────────── */
+  let weeklyEnabled = false;
+
+  function paintWeeklyState(enabled) {
+    weeklyEnabled = enabled;
+    if (!el.btnWeeklyClean) return;
+    const label = el.btnWeeklyClean.querySelector('.btn-text');
+    if (label) label.textContent = enabled ? 'Disable' : 'Enable';
+    el.btnWeeklyClean.setAttribute('aria-pressed', String(enabled));
+    el.btnWeeklyClean.classList.toggle('is-active', enabled);
+  }
+
+  async function fetchScheduleStatus() {
+    if (!el.btnWeeklyClean) return;
+    try {
+      const data = await apiFetch('/api/schedule-status');
+      paintWeeklyState(!!data.enabled);
+    } catch (_) { /* non-fatal: leave default disabled state */ }
+  }
+
+  async function handleWeeklyClean() {
+    if (el.btnWeeklyClean.disabled) return;
+    const next = !weeklyEnabled;
+    setLoading(el.btnWeeklyClean, true);
+    termLog(next ? 'Scheduling weekly cleanup…' : 'Removing weekly cleanup…', 'info');
+    try {
+      const data = await apiFetch('/api/schedule-weekly', {
+        method: 'POST',
+        body: JSON.stringify({ enabled: next }),
+      });
+      paintWeeklyState(!!data.enabled);
+      termLog(data.enabled
+        ? 'Weekly automatic cleanup enabled (Sundays 03:00).'
+        : 'Weekly automatic cleanup disabled.', 'success');
+    } catch (err) {
+      termLog(`Schedule error: ${err.message}`, 'error');
+    } finally {
+      setLoading(el.btnWeeklyClean, false);
+    }
+  }
+
+  /* ──────────────────────────────────────────────────────────
      Bindings
      ────────────────────────────────────────────────────────── */
   el.btnScan.addEventListener('click', handleScan);
@@ -911,6 +1088,10 @@
   if (el.btnPurgeRam) el.btnPurgeRam.addEventListener('click', handlePurgeRam);
   if (el.btnLaunchAgents) el.btnLaunchAgents.addEventListener('click', handleLaunchAgents);
   if (el.btnThinSnapshots) el.btnThinSnapshots.addEventListener('click', handleThinSnapshots);
+  if (el.btnWeeklyClean) {
+    el.btnWeeklyClean.addEventListener('click', handleWeeklyClean);
+    fetchScheduleStatus();
+  }
 
   // Keyboard shortcuts
   document.addEventListener('keydown', (e) => {
