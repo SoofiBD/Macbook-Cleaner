@@ -751,7 +751,7 @@ safe_rm() {
     fi
   else
     # Trash-first (user files, non-sudo)
-    local _td; _td="$(_trash_item "$path")"
+    local _td; _td="$(_trash_item "$path" || true)"
     if [ -n "$_td" ] || [ ! -e "$path" ]; then
       success "$label: ${BOLD}${sz_h}${NC} $(L trashed)"
       TOTAL_FREED=$((TOTAL_FREED + sz_b))
@@ -817,7 +817,7 @@ safe_rm_contents() {
       # Capture size BEFORE trashing; afterwards the child is gone and any size
       # read returns 0. Use get_size_bytes so files (not just dirs) are measured.
       local child_sz; child_sz=$(get_size_bytes "$child")
-      _td="$(_trash_item "$child")"
+      _td="$(_trash_item "$child" || true)"
       if [ -n "$_td" ] || [ ! -e "$child" ]; then
         trashed_any=true
         oplog_record "trash" "$child_sz" "$child" "$_td" "$_CURRENT_CATEGORY"
@@ -2116,7 +2116,7 @@ derived_data_project_summary() {
   )
   [ -n "$rows" ] || return 0
 
-  local count; count=$(printf '%s\n' "$rows" | grep -c .)
+  local count; count=$(printf '%s\n' "$rows" | grep -c . || true)
   local summary="" shown=0 sz_b nm sz_h
   while IFS=$'\t' read -r sz_b nm; do
     [ -n "$sz_b" ] || continue

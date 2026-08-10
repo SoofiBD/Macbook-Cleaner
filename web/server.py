@@ -486,7 +486,14 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         return payload, None
 
     def _run_script(self, args, timeout=120, env_extra=None):
-        """Run clean_mac.sh with given arguments and return parsed JSON."""
+        """Run clean_mac.sh with given arguments and return parsed JSON.
+
+        The script may exit non-zero while still emitting valid JSON on
+        stdout (e.g. a partially-failed cleanup that still reports its
+        results).  We therefore always try to parse stdout first and
+        only fall back to the exit-code / stderr error when stdout is
+        empty or not valid JSON.
+        """
         cmd = ["bash", str(SCRIPT_PATH)] + args
         run_env = dict(os.environ)
         if env_extra:
@@ -502,8 +509,17 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             )
             output = result.stdout.strip()
             if not output:
-                return None, result.stderr.strip() or "Script returned no output"
-            parsed = json.loads(output)
+                err_msg = result.stderr.strip() or f"Script execution failed with exit code {result.returncode}"
+                return None, err_msg
+
+            try:
+                parsed = json.loads(output)
+            except json.JSONDecodeError as e:
+                # stdout contained something but it wasn't valid JSON.
+                if result.returncode != 0:
+                    err_msg = result.stderr.strip() or f"Script failed (exit {result.returncode})"
+                    return None, err_msg
+                return None, f"Invalid JSON from script: {e}"
 
             # Normalize boolean fields (Bash outputs JSON bool literals,
             # but this ensures consistency even if format changes)
@@ -513,8 +529,6 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             return parsed, None
         except subprocess.TimeoutExpired:
             return None, "Script timed out"
-        except json.JSONDecodeError as e:
-            return None, f"Invalid JSON from script: {e}"
         except Exception as e:
             sys.stderr.write(f"[ERROR] _run_script: {e}\n")
             return None, "Internal script error"
@@ -1023,7 +1037,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         # leftovers. Skipped if the brew step above already failed.
         if source in ("app_dir", "both") and success:
             # Run clean_mac.sh category 10 (app_uninstaller)
-            data, script_err = self._run_script(["--clean-json", "10", "--app-uninstaller-sub", clean_target])
+            data, script_err = self._run_script(["--clean-json", "11", "--app-uninstaller-sub", clean_target])
             if script_err:
                 success = False
                 msg = f"Leftovers cleanup failed: {script_err}"

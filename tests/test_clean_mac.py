@@ -243,3 +243,36 @@ def test_category_registry_order_is_stable():
     ]
     ids = _source_eval('printf "%s\\n" "${CAT_IDS[@]}"').splitlines()
     assert ids == expected, ids
+
+
+def test_derived_data_summary_handles_empty_rows(tmp_path):
+    # Under set -eo pipefail, derived_data_project_summary must not exit 1
+    # when DerivedData has no projects > 1MB.
+    env = dict(os.environ, HOME=str(tmp_path))
+    dd = tmp_path / "Library/Developer/Xcode/DerivedData"
+    dd.mkdir(parents=True)
+    out = subprocess.run(
+        ["bash", "-c", f'set -eo pipefail; source "{SCRIPT}"; derived_data_project_summary'],
+        env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert out.returncode == 0, out.stderr
+
+
+def test_safe_rm_contents_handles_trash_failure(tmp_path):
+    # Mock _trash_item to return 1; safe_rm_contents must not exit 1 under set -e.
+    env = dict(os.environ, HOME=str(tmp_path))
+    target = tmp_path / "cache_dir"
+    target.mkdir()
+    (target / "file.txt").write_text("data")
+    cmd = (
+        f'set -eo pipefail; source "{SCRIPT}"; '
+        '_trash_item() { return 1; }; '
+        'safe_rm_contents "' + str(target) + '" "Test"'
+    )
+    out = subprocess.run(
+        ["bash", "-c", cmd],
+        env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert out.returncode == 0, out.stderr
+
+

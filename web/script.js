@@ -367,7 +367,14 @@
         ...(options.headers || {}),
       },
     });
-    if (!res.ok) throw new Error(`Server error (HTTP ${res.status})`);
+    if (!res.ok) {
+      let msg = `Server error (HTTP ${res.status})`;
+      try {
+        const errJson = await res.json();
+        if (errJson && errJson.error) msg = errJson.error;
+      } catch (e) {}
+      throw new Error(msg);
+    }
     const data = await res.json();
     if (!data.success && data.error) throw new Error(data.error);
     return data;

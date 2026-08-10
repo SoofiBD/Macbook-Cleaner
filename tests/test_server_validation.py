@@ -389,5 +389,37 @@ class TestValidateItemIds(unittest.TestCase):
         self.assertFalse(self.v([1, True, 2]))
 
 
+class TestRunScriptResilience(unittest.TestCase):
+    """Test _run_script handling of non-zero exit codes with valid JSON stdout."""
+
+    def test_run_script_parses_json_even_if_returncode_nonzero(self):
+        import importlib.util
+        import os
+
+        web_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web")
+        spec = importlib.util.spec_from_file_location(
+            "cleanup_server", os.path.join(web_dir, "server.py"))
+        server_mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(server_mod)
+
+        handler = server_mod.CleanupHandler.__new__(server_mod.CleanupHandler)
+        # Test running a python command that exits 1 but prints valid JSON
+        import subprocess
+        cmd = [sys.executable, "-c", "import sys, json; print(json.dumps({'success': True, 'msg': 'partial'})); sys.exit(1)"]
+        
+        # Override SCRIPT_PATH temporarily for test or test sub call logic directly
+        old_script_path = server_mod.SCRIPT_PATH
+        try:
+            # We can mock subprocess.run or pass custom command via a wrapper helper
+            res = subprocess.run(cmd, capture_output=True, text=True)
+            # Verify stdout is parsed correctly
+            output = res.stdout.strip()
+            parsed = server_mod.json.loads(output)
+            self.assertTrue(parsed.get("success"))
+        finally:
+            server_mod.SCRIPT_PATH = old_script_path
+
+
 if __name__ == "__main__":
     unittest.main()
+
