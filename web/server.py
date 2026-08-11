@@ -998,7 +998,10 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
 
         # Sanitize application name to prevent injection/traversal
         clean_target = folder_name if (folder_name and isinstance(folder_name, str)) else app_id
-        if source in ("app_dir", "both"):
+        # A Homebrew cask can also have an app bundle in /Applications.  Keep
+        # validating the folder name because it is passed to clean_mac.sh for
+        # residual-file removal after brew finishes.
+        if source in ("app_dir", "both", "brew_cask") and folder_name:
             if not _validate_app_name(clean_target):
                 self._send_error_json("Invalid application name format", 400)
                 return
@@ -1037,8 +1040,10 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
 
         # Then run clean_mac.sh to remove any remaining .app bundle and clean
         # leftovers. Skipped if the brew step above already failed.
-        if source in ("app_dir", "both") and success:
-            # Run clean_mac.sh category 10 (app_uninstaller)
+        if source in ("app_dir", "both", "brew_cask") and success:
+            # Run clean_mac.sh category 11 (app_uninstaller).  This is also
+            # required for casks: brew may remove its receipt/version data
+            # without removing a separately-installed or stale .app bundle.
             data, script_err = self._run_script(["--clean-json", "11", "--app-uninstaller-sub", clean_target])
             if script_err:
                 success = False
