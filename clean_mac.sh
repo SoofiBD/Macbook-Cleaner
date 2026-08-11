@@ -1414,11 +1414,18 @@ clean_ios_backups() {
 }
 
 clean_app_uninstaller() {
-  _CURRENT_NEEDS_SUDO=0; _CURRENT_IS_TRASH_EMPTY=0
+  _CURRENT_NEEDS_SUDO=0
+  # An uninstaller must remove the app, not merely move it to ~/.Trash.  A
+  # bundle left in Trash can still be launched from Finder, which makes the
+  # uninstall appear to have failed.  Keep the permanent-delete mode scoped
+  # to this category; normal cache cleanup remains recoverable via Trash.
+  local _prev_trash_mode="$_CURRENT_IS_TRASH_EMPTY"
+  _CURRENT_IS_TRASH_EMPTY=1
   header "$(L hdr_app_uninstaller)"
   if $JSON_MODE; then
     if [ -z "$APP_UNINSTALLER_CLEAN" ]; then
       info "$(L no_app_specified)"
+      _CURRENT_IS_TRASH_EMPTY="$_prev_trash_mode"
       return
     fi
 
@@ -1456,9 +1463,11 @@ clean_app_uninstaller() {
         fi
       done < <(app_leftover_paths "$app_name" "$bundle_id")
     done
+    _CURRENT_IS_TRASH_EMPTY="$_prev_trash_mode"
     return
   fi
   info "$(L uninstaller_cli_only)"
+  _CURRENT_IS_TRASH_EMPTY="$_prev_trash_mode"
 }
 
 clean_mail_downloads() {
@@ -1871,7 +1880,9 @@ clean_broken_symlinks_silent() {
   # guard, trash-first behaviour and the operation-log audit trail.
   local _prev_cat="$_CURRENT_CATEGORY" _prev_sudo="$_CURRENT_NEEDS_SUDO"
   _CURRENT_CATEGORY="developer"; _CURRENT_NEEDS_SUDO=0
-  for link in "${broken_links[@]}"; do
+  # With `set -u`, expanding an empty array directly is an error on Bash 3.2.
+  # Use the guarded expansion so a zero-result scan simply does nothing.
+  for link in ${broken_links[@]+"${broken_links[@]}"}; do
     safe_rm "$link" "Broken symlink: $link"
   done
   _CURRENT_CATEGORY="$_prev_cat"; _CURRENT_NEEDS_SUDO="$_prev_sudo"
