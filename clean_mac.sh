@@ -1072,7 +1072,12 @@ scan_diagnostic_reports() {
 scan_quicklook_cache() {
   local i; i=$(cat_index_by_id quicklook_cache)
   local qldir
-  qldir="$(getconf DARWIN_USER_CACHE_DIR 2>/dev/null)com.apple.quicklook.ThumbnailsAgent/com.apple.QuickLook.thumbnailcache"
+  # `getconf DARWIN_USER_CACHE_DIR` is not available on every macOS release
+  # (and can return non-zero on a freshly-created user account).  This script
+  # uses `set -e`, so an unguarded assignment would abort the whole JSON scan
+  # before cleanup even starts.
+  qldir=""
+  qldir="$(getconf DARWIN_USER_CACHE_DIR 2>/dev/null || true)com.apple.quicklook.ThumbnailsAgent/com.apple.QuickLook.thumbnailcache"
   CAT_SIZES[$i]=$(get_dir_size_bytes "$qldir")
 }
 
@@ -3007,9 +3012,13 @@ do_clean_json() {
   TOTAL_ITEMS=0
   CLEAN_RESULTS=()
 
-  # Pre-clean free space measurement (KB, available on /)
-  local df_before
-  df_before=$(df -k / 2>/dev/null | awk 'NR==2 {print $4}')
+  # Pre-clean free space measurement (KB, available on /). df can transiently
+  # fail under heavy disk load (e.g. right after a large scan); under
+  # `set -euo pipefail` an unguarded call would abort the whole run with no
+  # JSON output and no stderr. An empty value falls through to the estimated
+  # freed-bytes branch below instead.
+  local df_before=""
+  df_before=$(df -k / 2>/dev/null | awk 'NR==2 {print $4}') || df_before=""
 
   # Build clean function map
   local fn_map=()
@@ -3037,9 +3046,10 @@ do_clean_json() {
     fi
   done
 
-  # Post-clean free space; real gain = df delta (bytes)
-  local df_after real_freed freed_source
-  df_after=$(df -k / 2>/dev/null | awk 'NR==2 {print $4}')
+  # Post-clean free space; real gain = df delta (bytes). Same transient-failure
+  # guard as df_before above.
+  local df_after="" real_freed freed_source
+  df_after=$(df -k / 2>/dev/null | awk 'NR==2 {print $4}') || df_after=""
   if [ -n "$df_before" ] && [ -n "$df_after" ]; then
     real_freed=$(( (df_after - df_before) * 1024 ))
     [ "$real_freed" -lt 0 ] && real_freed=0

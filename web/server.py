@@ -510,6 +510,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             output = result.stdout.strip()
             if not output:
                 err_msg = result.stderr.strip() or f"Script execution failed with exit code {result.returncode}"
+                if not result.stderr.strip():
+                    sys.stderr.write(f"[ERROR] {cmd} exited {result.returncode} with no output\n")
                 return None, err_msg
 
             try:
