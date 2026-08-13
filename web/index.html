@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="description" content="Apple Cleanup — clean your macOS system quickly and safely." />
-  <meta name="theme-color" content="#fbfbfc" />
+  <meta name="theme-color" content="#0d0f12" />
   <meta name="cleanup-token" content="__CLEANUP_TOKEN__" />
   <title>Apple Cleanup</title>
   <link rel="stylesheet" href="style.css" />
@@ -128,12 +128,8 @@
   </svg>
 
   <div class="app">
-    <!-- ── Glass background blobs (GSAP-animated) ──────────────── -->
-    <div class="bg-blobs" aria-hidden="true">
-      <span class="blob blob-a"></span>
-      <span class="blob blob-b"></span>
-      <span class="blob blob-c"></span>
-    </div>
+    <!-- Quiet grid atmosphere; intentionally static and non-interactive. -->
+    <div class="bg-blobs" aria-hidden="true"></div>
 
     <!-- ═══ Top bar ═══ -->
     <header class="topbar" role="banner">
@@ -141,7 +137,7 @@
         <span class="brand-mark" aria-hidden="true"><svg class="ic"><use href="#i-logo"/></svg></span>
         <div class="brand-text">
           <span class="brand-name">Apple Cleanup</span>
-          <span class="brand-sub">macOS maintenance</span>
+          <span class="brand-sub">Mac care, under your control</span>
         </div>
       </div>
 
@@ -173,26 +169,27 @@
 
     <!-- ═══ Navigation Tabs ═══ -->
     <nav class="nav-tabs" role="tablist" aria-label="Main menu">
-      <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="cleanupTabContent" id="tab-cleanup" type="button">
+      <span class="nav-label" aria-hidden="true">Workspace</span>
+      <button class="tab-btn active" role="tab" aria-selected="true" aria-controls="cleanupTabContent" id="tab-cleanup" type="button" tabindex="0">
         <svg class="ic"><use href="#i-sparkle"/></svg>
         <span>Cleanup</span>
       </button>
-      <button class="tab-btn" role="tab" aria-selected="false" aria-controls="uninstallerTabContent" id="tab-uninstaller" type="button">
+      <button class="tab-btn" role="tab" aria-selected="false" aria-controls="uninstallerTabContent" id="tab-uninstaller" type="button" tabindex="-1">
         <svg class="ic"><use href="#i-uninstall"/></svg>
         <span>App Uninstaller</span>
       </button>
-      <button class="tab-btn" role="tab" aria-selected="false" aria-controls="filesTabContent" id="tab-files" type="button">
+      <button class="tab-btn" role="tab" aria-selected="false" aria-controls="filesTabContent" id="tab-files" type="button" tabindex="-1">
         <svg class="ic"><use href="#i-leftover"/></svg>
         <span>Files</span>
       </button>
-      <button class="tab-btn" role="tab" aria-selected="false" aria-controls="historyTabContent" id="tab-history" type="button">
+      <button class="tab-btn" role="tab" aria-selected="false" aria-controls="historyTabContent" id="tab-history" type="button" tabindex="-1">
         <svg class="ic"><use href="#i-leftover"/></svg>
         <span>History</span>
       </button>
     </nav>
 
     <!-- ═══ History Tab Content ═══ -->
-    <div id="historyTabContent" role="tabpanel" hidden>
+    <div id="historyTabContent" role="tabpanel" aria-labelledby="tab-history" tabindex="0" hidden>
       <section class="section">
         <div class="section-head">
           <div class="section-titleblock">
@@ -214,7 +211,7 @@
     </div>
 
     <!-- ═══ Cleanup Tab Content ═══ -->
-    <div id="cleanupTabContent" role="tabpanel">
+    <div id="cleanupTabContent" role="tabpanel" aria-labelledby="tab-cleanup" tabindex="0">
       <section class="hero" id="hero" data-state="idle">
       <div class="hero-left">
         <div class="hero-eyebrow" id="heroEyebrow">Status · No scan yet</div>
@@ -223,6 +220,10 @@
           Scan caches, logs, temporary files and app leftovers.
           Nothing is removed until you confirm.
         </p>
+        <div class="hero-assurance" aria-label="Privacy and safety">
+          <span><svg class="ic"><use href="#i-check"/></svg>Runs locally</span>
+          <span><svg class="ic"><use href="#i-check"/></svg>Review before removal</span>
+        </div>
 
         <!-- Idle / Scanned big number -->
         <div class="hero-number" id="heroNumber" hidden>
@@ -317,7 +318,7 @@
           <div class="results-title" id="resultsTitle">Cleanup complete</div>
           <div class="results-sub" id="resultsSubtitle"></div>
         </div>
-        <button class="icon-btn results-close" id="resultsClose" type="button" aria-label="Kapat">
+        <button class="icon-btn results-close" id="resultsClose" type="button" aria-label="Close">
           <svg class="ic"><use href="#i-x"/></svg>
         </button>
       </div>
@@ -417,12 +418,12 @@
     </div>
 
     <!-- ═══ App Uninstaller Tab Content ═══ -->
-    <div id="uninstallerTabContent" role="tabpanel" hidden>
+    <div id="uninstallerTabContent" role="tabpanel" aria-labelledby="tab-uninstaller" tabindex="0" hidden>
       <section class="section">
         <div class="section-head">
           <div class="section-titleblock">
             <h2 class="section-title">App Uninstaller</h2>
-            <span class="section-sub" id="appsCount">Scanning…</span>
+            <span class="section-sub" id="appsCount">Remove apps and their verified support files</span>
           </div>
           <div class="section-tools">
             <div class="search-box">
@@ -441,12 +442,12 @@
     </div>
 
     <!-- ═══ Cleanable Files Tab Content ═══ -->
-    <div id="filesTabContent" role="tabpanel" hidden>
+    <div id="filesTabContent" role="tabpanel" aria-labelledby="tab-files" tabindex="0" hidden>
       <section class="section">
         <div class="section-head">
           <div class="section-titleblock">
             <h2 class="section-title">Cleanable Files</h2>
-            <span class="section-sub" id="filesCount">Scan first</span>
+            <span class="section-sub" id="filesCount">Review individual scan results before cleaning</span>
           </div>
           <div class="section-tools files-toolbar">
             <div class="search-box">
@@ -484,7 +485,7 @@
       <button class="term-head" id="termHead" type="button" aria-expanded="false">
         <span class="term-headleft">
           <svg class="ic"><use href="#i-terminal"/></svg>
-          <span class="term-title">Terminal</span>
+          <span class="term-title">Activity</span>
           <span class="term-badge" id="termCount">0</span>
         </span>
         <span class="term-headright">
@@ -499,9 +500,9 @@
     <footer class="foot">
       <span>Apple Cleanup v2.0.0</span>
       <span class="foot-dot">·</span>
-      <span>macOS system cleanup tool</span>
+      <span>Local processing · No telemetry</span>
       <span class="foot-dot">·</span>
-      <a href="https://github.com" class="foot-link">GitHub</a>
+      <span>Nothing removed without confirmation</span>
     </footer>
   </div>
 
@@ -509,9 +510,6 @@
   <script src="vendor/gsap.min.js"></script>
   <script src="vendor/ScrollTrigger.min.js"></script>
   <script src="vendor/Flip.min.js"></script>
-  <script src="vendor/InertiaPlugin.min.js"></script>
-  <script src="vendor/Draggable.min.js"></script>
-  <script src="vendor/SplitText.min.js"></script>
   <script src="anim.js"></script>
   <script src="scanutil.js"></script>
   <script src="script.js"></script>

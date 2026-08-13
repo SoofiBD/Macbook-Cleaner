@@ -179,16 +179,22 @@
      Theme + accent
      ────────────────────────────────────────────────────────── */
   const PALETTES = {
-    blue:   { accent: '#2466e8', accent2: '#4d8eff' },
-    indigo: { accent: '#5b54e6', accent2: '#8b7df5' },
-    green:  { accent: '#16a34a', accent2: '#22c55e' },
-    rose:   { accent: '#e11d6b', accent2: '#f5587f' },
-    slate:  { accent: '#334155', accent2: '#64748b' },
+    blue:   { accent: '#2466e8', accent2: '#4d8eff', rgb: '36, 102, 232' },
+    indigo: { accent: '#5b54e6', accent2: '#8b7df5', rgb: '91, 84, 230' },
+    green:  { accent: '#16a34a', accent2: '#22c55e', rgb: '22, 163, 74' },
+    rose:   { accent: '#e11d6b', accent2: '#f5587f', rgb: '225, 29, 107' },
+    slate:  { accent: '#334155', accent2: '#64748b', rgb: '51, 65, 85' },
   };
+
+  function syncThemeColor(theme) {
+    const tag = document.querySelector('meta[name="theme-color"]');
+    if (tag) tag.content = theme === 'dark' ? '#0d0f12' : '#f3f3f0';
+  }
 
   function initTheme() {
     const t = localStorage.getItem('ac-theme') || 'dark';
     document.documentElement.setAttribute('data-theme', t);
+    syncThemeColor(t);
     const p = localStorage.getItem('ac-palette') || 'blue';
     applyPalette(p);
   }
@@ -197,6 +203,7 @@
     const cur = document.documentElement.getAttribute('data-theme');
     const next = cur === 'dark' ? 'light' : 'dark';
     document.documentElement.setAttribute('data-theme', next);
+    syncThemeColor(next);
     localStorage.setItem('ac-theme', next);
     window.AppAnim?.themeSwitch?.();
     termLog(`Theme changed: ${next === 'dark' ? 'dark' : 'light'}`, 'info');
@@ -206,6 +213,7 @@
     const p = PALETTES[name] || PALETTES.blue;
     document.documentElement.style.setProperty('--accent', p.accent);
     document.documentElement.style.setProperty('--accent-2', p.accent2);
+    document.documentElement.style.setProperty('--accent-rgb', p.rgb);
     localStorage.setItem('ac-palette', name);
     // Update tweaks panel active state
     $$('.tweaks-sw').forEach((sw) => {
@@ -222,7 +230,7 @@
   const TERM_MAX_LINES = 500;
   function termLog(msg, type = '') {
     const now = new Date();
-    const time = now.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const time = now.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     const line = document.createElement('div');
     line.className = 'term-line';
     const tEl = document.createElement('span');
@@ -265,20 +273,22 @@
       ).join('');
 
       li.innerHTML = `
-        <button class="cat-row" type="button" data-role="row">
-          <span class="cat-ic"><svg class="ic"><use href="#${cat.icon}"/></svg></span>
-          <span class="cat-meta">
-            <span class="cat-name">${escapeHtml(cat.name)}${tagsHtml ? ' ' + tagsHtml : ''}</span>
-            <span class="cat-desc">${escapeHtml(cat.desc)}</span>
-          </span>
-          <span class="cat-bar"><span class="cat-bar-fill"></span></span>
-          <span class="cat-size" data-size="${cat.key}">—</span><span class="cat-risk" data-risk="${escapeAttr(cat.key)}"></span>
-          <label class="switch" onclick="event.stopPropagation()">
-            <input type="checkbox" ${cat.defaultChecked ? 'checked' : ''} />
+        <div class="cat-row">
+          <button class="cat-row-main" type="button" data-role="row" aria-label="${escapeAttr(cat.name)}">
+            <span class="cat-ic"><svg class="ic"><use href="#${cat.icon}"/></svg></span>
+            <span class="cat-meta">
+              <span class="cat-name">${escapeHtml(cat.name)}${tagsHtml ? ' ' + tagsHtml : ''}</span>
+              <span class="cat-desc">${escapeHtml(cat.desc)}</span>
+            </span>
+            <span class="cat-bar"><span class="cat-bar-fill"></span></span>
+            <span class="cat-size" data-size="${cat.key}">—</span><span class="cat-risk" data-risk="${escapeAttr(cat.key)}"></span>
+            <svg class="ic cat-chev"><use href="#i-chev"/></svg>
+          </button>
+          <label class="switch">
+            <input type="checkbox" aria-label="Select ${escapeAttr(cat.name)}" ${cat.defaultChecked ? 'checked' : ''} />
             <span class="switch-slider"></span>
           </label>
-          <svg class="ic cat-chev"><use href="#i-chev"/></svg>
-        </button>
+        </div>
       `;
       el.catList.appendChild(li);
     });
@@ -376,7 +386,13 @@
       throw new Error(msg);
     }
     const data = await res.json();
-    if (!data.success && data.error) throw new Error(data.error);
+    if (data && data.success === false) {
+      const details = Array.isArray(data.errors)
+        ? data.errors.map((entry) => typeof entry === 'string' ? entry : entry?.message)
+          .filter(Boolean).join('; ')
+        : '';
+      throw new Error(data.error || details || 'Operation failed.');
+    }
     return data;
   }
 
@@ -451,7 +467,12 @@
     el.hero.setAttribute('data-state', 'scanning');
     el.heroEyebrow.textContent = 'Scanning…';
     $$('.subitems').forEach((s) => s.remove());
-    el.cats.forEach((c) => c.removeAttribute('data-open'));
+    el.cats.forEach((c) => {
+      c.removeAttribute('data-open');
+      const row = $('[data-role="row"]', c);
+      row?.removeAttribute('aria-controls');
+      row?.removeAttribute('aria-expanded');
+    });
 
     termLog('Starting scan…', 'info');
 
@@ -543,7 +564,7 @@
     el.heroBarLegend.innerHTML = '';
 
     const sortedEntries = Object.entries(scan)
-      .filter(([, v]) => v.size_bytes > 0)
+      .filter(([, v]) => v.in_total !== false && v.size_bytes > 0)
       .sort((a, b) => b[1].size_bytes - a[1].size_bytes);
 
     sortedEntries.forEach(([key, info]) => {
@@ -639,6 +660,12 @@
     const wrap = document.createElement('div');
     wrap.className = 'subitems';
     wrap.dataset.cat = key;
+    wrap.id = `subitems-${key}`;
+    const rowButton = $('[data-role="row"]', card);
+    if (rowButton) {
+      rowButton.setAttribute('aria-controls', wrap.id);
+      rowButton.setAttribute('aria-expanded', 'false');
+    }
 
     subitems.forEach((sub) => {
       const row = document.createElement('div');
@@ -682,7 +709,7 @@
       ].join('');
 
       row.innerHTML = `
-        <input type="checkbox" data-sub-id="${escapeAttr(sub.id)}" ${checkedAttr}>
+        <input type="checkbox" aria-label="Select ${escapeAttr(sub.name)}" data-sub-id="${escapeAttr(sub.id)}" ${checkedAttr}>
         <span class="subitem-name" title="${escapeAttr(desc || sub.path || sub.name)}">
           <b>${escapeHtml(sub.name)}</b>
           ${descHtml}
@@ -776,13 +803,16 @@
         body: JSON.stringify(payload),
       });
 
+      const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+      const isPartial = warnings.length > 0 ||
+        (data.details || []).some((detail) => detail.status === 'partial');
+
       el.resultsPanel.hidden = false;
       el.resultsPanel.classList.remove('error');
       window.AppAnim?.pop?.(el.resultsPanel);
-      window.AppAnim?.bindResultsDrag?.();
       el.resultsTitle.textContent = data.dry_run
         ? 'Preview (nothing was deleted)'
-        : 'Cleanup complete';
+        : (isPartial ? 'Cleanup completed with skipped items' : 'Cleanup complete');
       // In dry-run the disk delta is 0, so show the estimate as the headline.
       const freedText = data.dry_run
         ? (data.estimated_human || formatBytes(data.estimated_bytes || 0))
@@ -803,12 +833,29 @@
         chip.className = 'result-chip';
         chip.innerHTML = `${escapeHtml(name)} <span class="chip-freed">${escapeHtml(d.freed)}</span>`;
         el.resultsChips.appendChild(chip);
-        termLog(`  ✓ ${name}: ${d.freed}`, 'success');
+        if (d.status === 'partial') {
+          termLog(`  ⚠ ${name}: ${d.freed} reclaimed; some active files were skipped.`, 'warning');
+        } else {
+          termLog(`  ✓ ${name}: ${d.freed}`, 'success');
+        }
       });
 
-      (data.errors || []).forEach((e) => termLog(`  ✗ Error: ${e}`, 'error'));
+      warnings.forEach((warning) => {
+        const message = typeof warning === 'string' ? warning : warning?.message;
+        if (message) termLog(`  ⚠ ${message}`, 'warning');
+      });
 
-      termLog(`Reclaimed ${freedText} in total.`, 'success');
+      (data.errors || []).forEach((e) => {
+        const message = typeof e === 'string' ? e : e?.message;
+        if (message) termLog(`  ✗ Error: ${message}`, 'error');
+      });
+
+      termLog(
+        isPartial
+          ? `Partial cleanup complete — reclaimed ${freedText}; active or protected files were left untouched.`
+          : `Reclaimed ${freedText} in total.`,
+        isPartial ? 'warning' : 'success'
+      );
 
       // Reset categories' bars
       $$('.cat-bar-fill').forEach((b) => { b.style.width = '0%'; b.classList.remove('size-lg', 'size-xl'); });
@@ -818,7 +865,9 @@
       filesSelected.clear();
 
       el.hero.setAttribute('data-state', 'idle');
-      el.heroEyebrow.textContent = 'Cleanup complete · Scan again';
+      el.heroEyebrow.textContent = isPartial
+        ? 'Cleanup complete · Some active files were skipped'
+        : 'Cleanup complete · Scan again';
       el.heroNumber.hidden = true;
       el.heroBar.hidden = true;
       el.heroTitle.textContent = 'Your Mac is faster.';
@@ -929,7 +978,7 @@
      ────────────────────────────────────────────────────────── */
   function buildTreemapData(scan) {
     return Object.entries(scan)
-      .filter(([, v]) => (v.size_bytes || 0) > 0)
+      .filter(([, v]) => v.in_total !== false && (v.size_bytes || 0) > 0)
       .map(([key, v]) => ({
         key,
         name: CAT_BY_KEY[key]?.name || key,
@@ -1032,16 +1081,7 @@
     }
     host.appendChild(frag);
 
-    if (window.gsap) {
-      window.gsap.from(nodes, {
-        duration: 0.5,
-        opacity: 0,
-        scale: 0.6,
-        transformOrigin: '50% 50%',
-        ease: 'power2.out',
-        stagger: { each: 0.03, from: 'start' },
-      });
-    }
+    window.AppAnim?.revealTreemap?.(nodes);
   }
 
   // Re-layout on resize (debounced) so the map stays crisp.
@@ -1150,20 +1190,20 @@
     panel.innerHTML = `
       <div class="tweaks-head">
         <span class="tweaks-title">Tweaks</span>
-        <button class="icon-btn" id="tweaksClose" aria-label="Kapat"><svg class="ic"><use href="#i-x"/></svg></button>
+        <button class="icon-btn" id="tweaksClose" aria-label="Close"><svg class="ic"><use href="#i-x"/></svg></button>
       </div>
       <div class="tweaks-row">
-        <span>Aksent</span>
+        <span>Accent</span>
         <span class="tweaks-swatches">
-          <span class="tweaks-sw" data-palette="blue"   style="background:#2466e8"></span>
-          <span class="tweaks-sw" data-palette="indigo" style="background:#5b54e6"></span>
-          <span class="tweaks-sw" data-palette="green"  style="background:#16a34a"></span>
-          <span class="tweaks-sw" data-palette="rose"   style="background:#e11d6b"></span>
-          <span class="tweaks-sw" data-palette="slate"  style="background:#334155"></span>
+          <button class="tweaks-sw" type="button" aria-label="Blue accent" data-palette="blue"   style="background:#2466e8"></button>
+          <button class="tweaks-sw" type="button" aria-label="Indigo accent" data-palette="indigo" style="background:#5b54e6"></button>
+          <button class="tweaks-sw" type="button" aria-label="Green accent" data-palette="green"  style="background:#16a34a"></button>
+          <button class="tweaks-sw" type="button" aria-label="Rose accent" data-palette="rose"   style="background:#e11d6b"></button>
+          <button class="tweaks-sw" type="button" aria-label="Slate accent" data-palette="slate"  style="background:#334155"></button>
         </span>
       </div>
       <div class="tweaks-row">
-        <span>Tema</span>
+        <span>Theme</span>
         <button class="chip-btn" id="tweaksTheme">Change</button>
       </div>
     `;
@@ -1211,6 +1251,7 @@
       const hasSubs = card.querySelector('.subitems');
       if (hasSubs) {
         const willOpen = card.getAttribute('data-open') !== 'true';
+        row.setAttribute('aria-expanded', String(willOpen));
         // GSAP accordion when available; falls back to a plain toggle.
         if (!window.AppAnim?.expand?.(card, willOpen)) {
           card.setAttribute('data-open', String(willOpen));
@@ -1222,11 +1263,9 @@
     });
   });
 
-  // GSAP entrance + scroll reveals + draggable panels (no-ops without GSAP).
+  // GSAP entrance and quiet scroll reveals (no-ops without GSAP).
   window.AppAnim?.intro?.();
-  window.AppAnim?.blobs?.();
   window.AppAnim?.revealCards?.();
-  window.AppAnim?.setupDraggable?.();
 
   el.btnSelectAll.addEventListener('click', () => {
     el.cats.forEach((card) => {
@@ -1263,7 +1302,7 @@
 
   let allApplications = [];
 
-  function showTab(tabId) {
+  function showTab(tabId, shouldFocus = false) {
     const map = {
       cleanup:     [tabCleanup, cleanupTabContent],
       uninstaller: [tabUninstaller, uninstallerTabContent],
@@ -1274,8 +1313,11 @@
       const active = id === tabId;
       btn.classList.toggle('active', active);
       btn.setAttribute('aria-selected', active ? 'true' : 'false');
+      btn.setAttribute('tabindex', active ? '0' : '-1');
       content.hidden = !active;
+      if (active) window.AppAnim?.panel?.(content);
     });
+    if (shouldFocus) map[tabId][0].focus();
     if (tabId === 'uninstaller') loadApplications();
     if (tabId === 'files') renderFileList();
     if (tabId === 'history') { loadOperations(); loadHistory(); }
@@ -1285,6 +1327,20 @@
   tabUninstaller.addEventListener('click', () => showTab('uninstaller'));
   tabFiles.addEventListener('click', () => showTab('files'));
   tabHistory.addEventListener('click', () => showTab('history'));
+
+  const tabOrder = ['cleanup', 'uninstaller', 'files', 'history'];
+  const tabButtons = [tabCleanup, tabUninstaller, tabFiles, tabHistory];
+  document.querySelector('.nav-tabs')?.addEventListener('keydown', (event) => {
+    if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
+    event.preventDefault();
+    const current = tabButtons.indexOf(document.activeElement);
+    let next = current < 0 ? 0 : current;
+    if (event.key === 'Home') next = 0;
+    else if (event.key === 'End') next = tabButtons.length - 1;
+    else if (event.key === 'ArrowRight' || event.key === 'ArrowDown') next = (next + 1) % tabButtons.length;
+    else next = (next - 1 + tabButtons.length) % tabButtons.length;
+    showTab(tabOrder[next], true);
+  });
 
   /* ──────────────────────────────────────────────────────────
      Undo / Restore tab
@@ -1481,15 +1537,28 @@
       const data = await apiFetch('/api/clean', {
         method: 'POST', body: JSON.stringify(payload),
       });
+      const warnings = Array.isArray(data.warnings) ? data.warnings : [];
+      const isPartial = warnings.length > 0 ||
+        (data.details || []).some((detail) => detail.status === 'partial');
       el.resultsPanel.hidden = false;
       el.resultsPanel.classList.remove('error');
       el.resultsTitle.textContent = data.dry_run
-        ? 'Preview (nothing was deleted)' : 'Cleanup complete';
+        ? 'Preview (nothing was deleted)'
+        : (isPartial ? 'Cleanup completed with skipped items' : 'Cleanup complete');
       el.resultsFreed.textContent = data.dry_run
         ? (data.estimated_human || formatBytes(data.estimated_bytes || 0))
         : (data.freed_human || formatBytes(data.freed_bytes || 0));
       if (data.disk_free) el.sysDiskFree.textContent = data.disk_free;
-      termLog(`Cleanup complete — ${el.resultsFreed.textContent}`, 'success');
+      warnings.forEach((warning) => {
+        const message = typeof warning === 'string' ? warning : warning?.message;
+        if (message) termLog(`⚠ ${message}`, 'warning');
+      });
+      termLog(
+        isPartial
+          ? `Partial cleanup complete — ${el.resultsFreed.textContent}; active or protected files were left untouched.`
+          : `Cleanup complete — ${el.resultsFreed.textContent}`,
+        isPartial ? 'warning' : 'success'
+      );
       if (!data.dry_run) filesSelected.clear();
       renderFileList();
     } catch (err) {
@@ -1553,8 +1622,8 @@
     apps.forEach((app) => {
       const li = document.createElement('li');
       li.className = 'app-item';
-      li.dataset.appId = app.id;
-      li.dataset.flipId = app.id;   // lets Flip match items across filtering
+      li.dataset.appId = app.target_id;
+      li.dataset.flipId = app.target_id;   // lets Flip match items across filtering
 
       // Source badges
       let sourceBadge = '';
@@ -1566,6 +1635,9 @@
         sourceBadge = '<span class="app-src src-both">both</span>';
       } else {
         sourceBadge = '<span class="app-src src-dir">app</span>';
+      }
+      if (app.protected) {
+        sourceBadge += '<span class="app-src src-dir">protected</span>';
       }
 
       // App icon placeholder or letter icon
@@ -1585,9 +1657,9 @@
         <div class="app-action-col">
           ${sourceBadge}
           <span class="app-size-val">${escapeHtml(app.size_human)}</span>
-          <button class="btn btn-danger btn-sm btn-uninstall" type="button" data-id="${escapeAttr(app.id)}" data-source="${escapeAttr(app.source)}" data-name="${escapeAttr(app.name)}" data-folder-name="${escapeAttr(app.folder_name)}">
+          <button class="btn btn-danger btn-sm btn-uninstall" type="button" data-target-id="${escapeAttr(app.target_id)}" data-name="${escapeAttr(app.name)}" ${app.protected ? 'disabled aria-disabled="true"' : ''}>
             <span class="spinner" aria-hidden="true"></span>
-            <span class="btn-text">Uninstall</span>
+            <span class="btn-text">${app.protected ? 'Protected' : 'Uninstall'}</span>
           </button>
         </div>
       `;
@@ -1597,11 +1669,9 @@
     // Wire up uninstall buttons
     $$('.btn-uninstall', appsList).forEach((btn) => {
       btn.addEventListener('click', (e) => {
-        const id = btn.dataset.id;
-        const source = btn.dataset.source;
+        const targetId = btn.dataset.targetId;
         const name = btn.dataset.name;
-        const folderName = btn.dataset.folderName;
-        handleAppUninstall(btn, id, source, name, folderName);
+        handleAppUninstall(btn, targetId, name);
       });
     });
 
@@ -1627,7 +1697,8 @@
     const next = !q ? allApplications : allApplications.filter((app) =>
       (app.name && app.name.toLowerCase().includes(q)) ||
       (app.bundle_id && app.bundle_id.toLowerCase().includes(q)) ||
-      (app.id && app.id.toLowerCase().includes(q))
+      (app.id && app.id.toLowerCase().includes(q)) ||
+      (app.path && app.path.toLowerCase().includes(q))
     );
     // Flip: matched items glide to new positions, removed/added fade out/in.
     const render = () => renderApplications(next, true);
@@ -1635,7 +1706,7 @@
     else renderApplications(next);
   }
 
-  async function handleAppUninstall(btn, id, source, name, folderName) {
+  async function handleAppUninstall(btn, targetId, name) {
     const confirmed = confirm(`Are you sure you want to uninstall "${name}" and all its associated files?`);
     if (!confirmed) return;
 
@@ -1645,7 +1716,7 @@
     try {
       const data = await apiFetch('/api/uninstall', {
         method: 'POST',
-        body: JSON.stringify({ id, source, folder_name: folderName }),
+        body: JSON.stringify({ target_id: targetId }),
       });
 
       if (data && data.success) {
@@ -1660,7 +1731,7 @@
           li.style.transition = 'all 0.35s ease';
           setTimeout(() => {
             li.remove();
-            allApplications = allApplications.filter((a) => a.id !== id);
+            allApplications = allApplications.filter((a) => a.target_id !== targetId);
             const appsCount = $('#appsCount');
             if (appsCount) appsCount.textContent = `${allApplications.length} applications`;
           }, 350);

@@ -12,7 +12,6 @@ Security features:
   - Boolean normalization for scan JSON fields
 """
 
-import glob
 import hmac
 import http.server
 import json
@@ -27,6 +26,7 @@ import threading
 import time
 import urllib.parse
 import webbrowser
+from functools import wraps
 from pathlib import Path
 
 # Bind to loopback only — this API can delete files and must never be
@@ -34,7 +34,17 @@ from pathlib import Path
 HOST = "127.0.0.1"
 PORT = 8080
 WEB_DIR = Path(__file__).parent.resolve()
-SCRIPT_PATH = (WEB_DIR.parent / "clean_mac.sh").resolve()
+
+
+def _get_script_path():
+    """Use Homebrew's stable opt path when the launcher provides one."""
+    configured = os.environ.get("APPLE_CLEANUP_SCRIPT_PATH")
+    if configured:
+        return Path(configured).expanduser()
+    return (WEB_DIR.parent / "clean_mac.sh").resolve()
+
+
+SCRIPT_PATH = _get_script_path()
 
 # ── Weekly automatic cleanup (launchd) ───────────────────────────────────────
 # A user LaunchAgent that runs the no-sudo safe cleanup once a week. It runs as
@@ -54,9 +64,24 @@ MAX_BODY_SIZE = 1 * 1024 * 1024  # 1,048,576 bytes
 HISTORY_FILE = os.path.expanduser("~/.cache/apple-cleanup/usage_history.json")
 _history_lock = threading.Lock()
 _launch_agent_lock = threading.Lock()
+_operation_lock = threading.Lock()
 MAX_HISTORY_DAYS = 90
 SNAPSHOT_INTERVAL = 3600           # seconds between recorded snapshots
 FORECAST_HORIZON_DAYS = 365        # don't report a forecast beyond a year
+
+
+def _exclusive_operation(method):
+    """Reject overlapping mutations instead of racing two delete pipelines."""
+    @wraps(method)
+    def wrapped(self, *args, **kwargs):
+        if not _operation_lock.acquire(blocking=False):
+            self._send_error_json("Another cleanup operation is already running", 409)
+            return None
+        try:
+            return method(self, *args, **kwargs)
+        finally:
+            _operation_lock.release()
+    return wrapped
 
 
 def _load_history():
@@ -230,6 +255,7 @@ _APP_NAME_RE     = re.compile(r'^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$')
 # Homebrew formula/cask tokens are lowercase alphanumerics plus -, _, ., @, /
 # (the slash appears in tap-qualified names like "homebrew/cask/foo").
 _BREW_NAME_RE    = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._@/-]{0,127}$')
+_BUNDLE_ID_RE    = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{1,254}$')
 
 # Developer sub-item whitelist — MUST be 100% in sync with clean_mac.sh
 # Corresponds to the case statement in clean_developer() JSON mode
@@ -312,7 +338,8 @@ def _validate_item_ids(lst) -> bool:
 
 def _validate_app_leftover(name: str) -> bool:
     """Validate an app leftover directory name (no traversal, no injection)."""
-    return bool(_APP_LEFTOVER_RE.match(name)) and ".." not in name and "/" not in name
+    return isinstance(name, str) and bool(_APP_LEFTOVER_RE.fullmatch(name)) \
+        and ".." not in name and "/" not in name
 
 
 def _validate_developer_item(item: str) -> bool:
@@ -327,12 +354,41 @@ def _validate_browser_key(key: str) -> bool:
 
 def _validate_app_name(name: str) -> bool:
     """Validate an application name for uninstallation."""
-    return bool(_APP_NAME_RE.match(name)) and ".." not in name and "/" not in name
+    return isinstance(name, str) and bool(_APP_NAME_RE.fullmatch(name)) \
+        and ".." not in name and "/" not in name
 
 
 def _validate_brew_name(name: str) -> bool:
     """Validate a Homebrew formula/cask token for uninstallation."""
-    return bool(_BREW_NAME_RE.match(name)) and ".." not in name
+    return isinstance(name, str) and bool(_BREW_NAME_RE.fullmatch(name)) \
+        and ".." not in name
+
+
+def _validate_bundle_id(value: str) -> bool:
+    return isinstance(value, str) and bool(_BUNDLE_ID_RE.fullmatch(value)) \
+        and ".." not in value
+
+
+def _coerce_categories(value):
+    """Return unique 1..17 category ids, or None for a malformed request."""
+    if not isinstance(value, list) or not value or len(value) > 17:
+        return None
+    categories = []
+    seen = set()
+    for raw in value:
+        if isinstance(raw, bool):
+            return None
+        if isinstance(raw, int):
+            category = raw
+        elif isinstance(raw, str) and raw.isdigit():
+            category = int(raw)
+        else:
+            return None
+        if not 1 <= category <= 17 or category in seen:
+            return None
+        seen.add(category)
+        categories.append(category)
+    return categories
 
 
 # Recognized build/dependency artifact directory names. Kept in sync with
@@ -342,6 +398,254 @@ _PROJECT_ARTIFACT_NAMES = frozenset({
     "node_modules", "target", ".build", "build",
     "vendor", ".dart_tool", ".terraform",
 })
+
+# Exact protected bundle ids, intentionally narrower than a blanket
+# `com.apple.*` rule so third-party/developer tools are not misclassified.
+_PROTECTED_APP_BUNDLE_IDS = frozenset({
+    "com.apple.finder", "com.apple.Safari", "com.apple.mail",
+    "com.apple.Terminal", "com.apple.systempreferences",
+    "com.apple.ActivityMonitor", "com.apple.Console",
+    "com.apple.DiskUtility", "com.apple.dt.Xcode", "com.apple.AppStore",
+    "com.apple.iCal", "com.apple.AddressBook", "com.apple.Preview",
+    "com.apple.TextEdit", "com.apple.calculator", "com.apple.Dictionary",
+    "com.apple.Maps", "com.apple.Notes", "com.apple.reminders",
+    "com.apple.Stickies", "com.apple.VoiceMemos", "com.apple.stocks",
+    "com.apple.weather", "com.apple.Passwords", "com.apple.FaceTime",
+    "com.apple.MobileSMS", "com.apple.Photos", "com.apple.Music",
+})
+
+
+def _application_roots():
+    """Return application roots at call time (tests may temporarily set HOME)."""
+    return (Path("/Applications"), Path(os.path.expanduser("~/Applications")))
+
+
+def _is_allowed_app_path(value, require_exists=True) -> bool:
+    """Allow only non-symlink .app bundles below a known Applications root."""
+    if not isinstance(value, str) or not value or "\x00" in value:
+        return False
+    path = Path(value)
+    if not path.is_absolute() or path.suffix.lower() != ".app":
+        return False
+    if path.is_symlink():
+        return False
+    try:
+        resolved = path.resolve(strict=require_exists)
+    except (OSError, RuntimeError):
+        return False
+    for root in _application_roots():
+        try:
+            resolved.relative_to(root.resolve())
+            return True
+        except (ValueError, OSError):
+            continue
+    return False
+
+
+def _iter_application_paths(max_depth=3):
+    """Discover real app bundles, including shallow vendor subdirectories."""
+    found = []
+    for root in _application_roots():
+        if not root.is_dir():
+            continue
+        for dirpath, dirnames, _filenames in os.walk(root, followlinks=False):
+            current = Path(dirpath)
+            try:
+                depth = len(current.relative_to(root).parts)
+            except ValueError:
+                continue
+            if depth >= max_depth:
+                dirnames[:] = []
+                continue
+            keep = []
+            for dirname in dirnames:
+                candidate = current / dirname
+                if candidate.suffix.lower() == ".app":
+                    if _is_allowed_app_path(str(candidate)):
+                        found.append(str(candidate))
+                    # Never descend into an application package: that would
+                    # surface its helper apps as independently uninstallable.
+                    continue
+                if not candidate.is_symlink():
+                    keep.append(dirname)
+            dirnames[:] = keep
+    return sorted(set(found), key=str.casefold)
+
+
+def _format_bytes(value):
+    if value >= 1024 ** 3:
+        return f"{value / (1024 ** 3):.1f} GB"
+    if value >= 1024 ** 2:
+        return f"{value / (1024 ** 2):.1f} MB"
+    if value >= 1024:
+        return f"{value / 1024:.1f} KB"
+    return f"{value} B"
+
+
+def _normalized_app_name(value):
+    return "".join(c.casefold() for c in os.path.splitext(value)[0] if c.isalnum())
+
+
+def _versionless_app_name(value):
+    return _normalized_app_name(re.sub(r"\d+(?:[._-]\d+)*", "", value))
+
+
+def _cask_match_keys(token):
+    """Conservative fallback keys when Homebrew artifact JSON is unavailable."""
+    normalized = _normalized_app_name(token)
+    keys = {normalized}
+    for suffix in ("desktop", "app", "formac", "mac"):
+        if normalized.endswith(suffix) and len(normalized) > len(suffix) + 2:
+            keys.add(normalized[:-len(suffix)])
+    return keys
+
+
+def _cask_app_artifacts(cask_info):
+    """Extract .app artifact basenames from Homebrew's versioned JSON shapes."""
+    names = set()
+    for artifact in cask_info.get("artifacts", []) if isinstance(cask_info, dict) else []:
+        values = []
+        if isinstance(artifact, dict) and "app" in artifact:
+            raw = artifact["app"]
+            values = raw if isinstance(raw, list) else [raw]
+        elif isinstance(artifact, list):
+            values = artifact
+        for value in values:
+            if isinstance(value, str) and value.lower().endswith(".app"):
+                names.add(os.path.basename(value)[:-4].casefold())
+    return names
+
+
+def discover_applications():
+    """Return a fresh, server-authoritative application/cask catalog."""
+    app_paths = _iter_application_paths()
+    app_sizes = {}
+    # Keep argv and command duration bounded on machines with many apps.
+    for start in range(0, len(app_paths), 40):
+        chunk = app_paths[start:start + 40]
+        try:
+            res = subprocess.run(
+                ["du", "-sk", "--", *chunk], capture_output=True,
+                text=True, timeout=20,
+            )
+            if res.returncode == 0:
+                for line in res.stdout.splitlines():
+                    parts = line.split("\t", 1)
+                    if len(parts) == 2 and parts[0].isdigit():
+                        app_sizes[parts[1]] = int(parts[0]) * 1024
+        except (OSError, subprocess.SubprocessError):
+            pass
+
+    casks = []
+    cask_artifacts = {}
+    brew = shutil.which("brew")
+    if brew:
+        try:
+            res = subprocess.run(
+                [brew, "list", "--cask"], capture_output=True,
+                text=True, timeout=15,
+            )
+            if res.returncode == 0:
+                casks = [line.strip() for line in res.stdout.splitlines()
+                         if _validate_brew_name(line.strip())]
+        except (OSError, subprocess.SubprocessError):
+            pass
+        if casks:
+            try:
+                res = subprocess.run(
+                    [brew, "info", "--cask", "--json=v2", *casks],
+                    capture_output=True, text=True, timeout=30,
+                )
+                if res.returncode == 0:
+                    info = json.loads(res.stdout)
+                    for entry in info.get("casks", []):
+                        token = entry.get("token") if isinstance(entry, dict) else None
+                        if token in casks:
+                            for app_name in _cask_app_artifacts(entry):
+                                cask_artifacts.setdefault(app_name, token)
+            except (OSError, ValueError, subprocess.SubprocessError):
+                pass
+
+    cask_candidates = {}
+    for cask in casks:
+        for key in _cask_match_keys(cask):
+            cask_candidates.setdefault(key, []).append(cask)
+    processed_casks = set()
+    apps = []
+    for app_path in app_paths:
+        folder_name = Path(app_path).stem
+        bundle_id = version = display_name = bundle_name = ""
+        try:
+            with open(os.path.join(app_path, "Contents", "Info.plist"), "rb") as handle:
+                plist = plistlib.load(handle)
+            bundle_id = str(plist.get("CFBundleIdentifier", ""))
+            version = str(plist.get("CFBundleShortVersionString",
+                                    plist.get("CFBundleVersion", "")))
+            display_name = str(plist.get("CFBundleDisplayName", ""))
+            bundle_name = str(plist.get("CFBundleName", ""))
+        except (OSError, ValueError, TypeError, plistlib.InvalidFileException):
+            pass
+
+        resolved_name = (display_name or bundle_name or folder_name).removesuffix(".app")
+        matched_cask = cask_artifacts.get(folder_name.casefold())
+        if not matched_cask:
+            candidates = set()
+            for key in {_normalized_app_name(folder_name),
+                        _versionless_app_name(folder_name)}:
+                candidates.update(cask_candidates.get(key, []))
+            if len(candidates) == 1:
+                matched_cask = candidates.pop()
+        if matched_cask:
+            processed_casks.add(matched_cask)
+        source = "both" if matched_cask else "app_dir"
+        size = app_sizes.get(app_path, 0)
+        apps.append({
+            "target_id": f"app:{app_path}",
+            "id": matched_cask or folder_name,
+            "name": resolved_name,
+            "folder_name": folder_name,
+            "path": app_path,
+            "size_bytes": size,
+            "size_human": _format_bytes(size),
+            "source": source,
+            "bundle_id": bundle_id,
+            "version": version,
+            "protected": bundle_id in _PROTECTED_APP_BUNDLE_IDS,
+        })
+
+    caskroom = Path("/opt/homebrew/Caskroom")
+    if not caskroom.exists():
+        caskroom = Path("/usr/local/Caskroom")
+    for cask in sorted(set(casks) - processed_casks, key=str.casefold):
+        cpath = caskroom / cask
+        size = 0
+        version = ""
+        try:
+            subdirs = [p for p in cpath.iterdir() if p.is_dir()]
+            if subdirs:
+                version = subdirs[0].name
+            res = subprocess.run(
+                ["du", "-sk", "--", str(cpath)], capture_output=True,
+                text=True, timeout=10,
+            )
+            if res.returncode == 0:
+                size = int(res.stdout.split()[0]) * 1024
+        except (OSError, ValueError, subprocess.SubprocessError):
+            pass
+        apps.append({
+            "target_id": f"cask:{cask}",
+            "id": cask,
+            "name": " ".join(w.capitalize() for w in re.split("[-_]", cask)),
+            "folder_name": "",
+            "path": str(cpath),
+            "size_bytes": size,
+            "size_human": _format_bytes(size),
+            "source": "brew_cask",
+            "bundle_id": "",
+            "version": version,
+            "protected": False,
+        })
+    return sorted(apps, key=lambda item: (item["name"].casefold(), item["target_id"]))
 
 
 def _validate_project_artifact(path: str) -> bool:
@@ -498,6 +802,9 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         run_env = dict(os.environ)
         if env_extra:
             run_env.update(env_extra)
+        # The dashboard is English-only. Do not let the parent shell's locale
+        # or APPLE_CLEANUP_LANG setting produce mixed-language API messages.
+        run_env["APPLE_CLEANUP_LANG"] = "en"
         try:
             result = subprocess.run(
                 cmd,
@@ -619,6 +926,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         else:
             self._send_json(data)
 
+    @_exclusive_operation
     def _handle_restore(self):
         payload, err = self._read_json_body()
         if err:
@@ -655,26 +963,18 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         data["free_bytes"] = usage.free
         self._send_json(data)
 
+    @_exclusive_operation
     def _handle_clean(self):
         payload, err = self._read_json_body()
         if err:
             self._send_error_json(err, 400)
             return
 
-        categories = payload.get("categories", [])
-        if not categories or not isinstance(categories, list):
-            self._send_error_json("Category list required", 400)
-            return
-
-        # Integer coercion: frontend may send strings like "3" instead of 3
-        safe_cats = []
-        for c in categories:
-            try:
-                safe_cats.append(int(c))
-            except (ValueError, TypeError):
-                pass  # Skip invalid entries silently
-        if not safe_cats:
-            self._send_error_json("No valid category indices provided", 400)
+        safe_cats = _coerce_categories(payload.get("categories"))
+        if safe_cats is None:
+            self._send_error_json(
+                "categories must contain unique integers from 1 through 17", 400
+            )
             return
 
         cat_str = ",".join(str(c) for c in safe_cats)
@@ -734,6 +1034,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         else:
             self._send_json(data)
 
+    @_exclusive_operation
     def _handle_spotlight_reindex(self):
         data, err = self._run_script(["--spotlight-reindex"], timeout=45)
         if err:
@@ -741,6 +1042,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         else:
             self._send_json(data)
 
+    @_exclusive_operation
     def _handle_flush_dns(self):
         data, err = self._run_script(["--flush-dns"], timeout=15)
         if err:
@@ -748,6 +1050,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         else:
             self._send_json(data)
 
+    @_exclusive_operation
     def _handle_purge_ram(self):
         data, err = self._run_script(["--purge-ram"], timeout=30)
         if err:
@@ -755,6 +1058,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         else:
             self._send_json(data)
 
+    @_exclusive_operation
     def _handle_launchagents_clean(self):
         data, err = self._run_script(["--launchagents-clean"], timeout=30)
         if err:
@@ -762,6 +1066,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         else:
             self._send_json(data)
 
+    @_exclusive_operation
     def _handle_thin_snapshots(self):
         data, err = self._run_script(["--thin-snapshots-json"], timeout=120)
         if err:
@@ -778,6 +1083,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             "plist_path": str(LAUNCH_AGENT_PLIST),
         })
 
+    @_exclusive_operation
     def _handle_schedule_weekly(self):
         """Enable/disable the weekly cleanup by writing/removing a LaunchAgent."""
         payload, err = self._read_json_body()
@@ -841,224 +1147,105 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
 
     def _handle_apps(self):
         try:
-            # We will scan and aggregate installed applications.
-            # 1. Glob /Applications/*.app and ~/Applications/*.app
-            app_paths = glob.glob("/Applications/*.app") + glob.glob(os.path.expanduser("~/Applications/*.app"))
-            app_sizes = {}
-            if app_paths:
-                try:
-                    res = subprocess.run(["du", "-sk", "--"] + app_paths, capture_output=True, text=True, timeout=10)
-                    if res.returncode == 0:
-                        for line in res.stdout.splitlines():
-                            parts = line.split('\t')
-                            if len(parts) == 2:
-                                app_sizes[parts[1]] = int(parts[0]) * 1024
-                except Exception:
-                    pass
-
-            # 2. Gather Homebrew casks
-            casks = []
-            if shutil.which("brew"):
-                try:
-                    res = subprocess.run(["brew", "list", "--cask"], capture_output=True, text=True, timeout=10)
-                    if res.returncode == 0:
-                        casks = [line.strip() for line in res.stdout.splitlines() if line.strip()]
-                except Exception:
-                    pass
-
-            caskroom = "/opt/homebrew/Caskroom" if os.path.exists("/opt/homebrew/Caskroom") else "/usr/local/Caskroom"
-
-            # Helper for formatting bytes
-            def format_bytes(b):
-                if b >= 1024*1024*1024:
-                    return f"{b / (1024*1024*1024):.1f} GB"
-                elif b >= 1024*1024:
-                    return f"{b / (1024*1024):.1f} MB"
-                elif b >= 1024:
-                    return f"{b / 1024:.1f} KB"
-                else:
-                    return f"{b} B"
-
-            def clean_name(n):
-                return "".join(c.lower() for c in os.path.splitext(n)[0] if c.isalnum())
-
-            def format_display_name(cask_id):
-                return " ".join(word.capitalize() for word in cask_id.replace("-", " ").replace("_", " ").split())
-
-            cask_set = set(casks)
-            cask_norm = {clean_name(c): c for c in casks}
-
-            apps_list = []
-            processed_casks = set()
-
-            # Process app paths
-            for path in app_paths:
-                basename = os.path.basename(path)
-                name = os.path.splitext(basename)[0]
-                norm = clean_name(name)
-                size = app_sizes.get(path, 0)
-
-                bundle_id = ""
-                version = ""
-                display_name = ""
-                bundle_name = ""
-                plist_path = os.path.join(path, "Contents", "Info.plist")
-                if os.path.exists(plist_path):
-                    try:
-                        with open(plist_path, 'rb') as f:
-                            plist = plistlib.load(f)
-                            bundle_id = plist.get("CFBundleIdentifier", "")
-                            version = plist.get("CFBundleShortVersionString", plist.get("CFBundleVersion", ""))
-                            display_name = plist.get("CFBundleDisplayName", "")
-                            bundle_name = plist.get("CFBundleName", "")
-                    except Exception:
-                        pass
-
-                resolved_name = display_name or bundle_name or name
-                if resolved_name.endswith('.app'):
-                    resolved_name = resolved_name[:-4]
-
-                # Special cleanups for premium visual aesthetics
-                if resolved_name == "zoom.us":
-                    resolved_name = "Zoom"
-                elif resolved_name == "Code":
-                    resolved_name = "Visual Studio Code"
-
-                source = "app_dir"
-                # Only pair an app with a cask on an exact normalized-name
-                # match. Substring matching mislabels unrelated apps as
-                # "both", which would change what /api/uninstall deletes.
-                matched_cask = cask_norm.get(norm)
-
-                if matched_cask:
-                    source = "both"
-                    processed_casks.add(matched_cask)
-
-                apps_list.append({
-                    "id": matched_cask or name,
-                    "name": resolved_name,
-                    "folder_name": name,
-                    "path": path,
-                    "size_bytes": size,
-                    "size_human": format_bytes(size),
-                    "source": source,
-                    "bundle_id": bundle_id,
-                    "version": version
-                })
-
-            # Process remaining casks
-            for cask in cask_set - processed_casks:
-                cpath = os.path.join(caskroom, cask)
-                size = 0
-                version = ""
-                if os.path.exists(cpath):
-                    try:
-                        subdirs = [d for d in os.listdir(cpath) if os.path.isdir(os.path.join(cpath, d))]
-                        if subdirs:
-                            version = subdirs[0]
-                        res = subprocess.run(["du", "-sk", "--", cpath], capture_output=True, text=True, timeout=5)
-                        if res.returncode == 0:
-                            size = int(res.stdout.split()[0]) * 1024
-                    except Exception:
-                        pass
-                apps_list.append({
-                    "id": cask,
-                    "name": format_display_name(cask),
-                    "folder_name": "",
-                    "path": cpath,
-                    "size_bytes": size,
-                    "size_human": format_bytes(size),
-                    "source": "brew_cask",
-                    "bundle_id": "",
-                    "version": version
-                })
-
-            apps_list.sort(key=lambda x: x["name"].lower())
-            self._send_json({"success": True, "apps": apps_list})
+            self._send_json({"success": True, "apps": discover_applications()})
         except Exception as e:
             sys.stderr.write(f"[ERROR] _handle_apps: {e}\n")
             self._send_error_json("Failed to list applications", 500)
 
+    @_exclusive_operation
     def _handle_uninstall(self):
         payload, err = self._read_json_body()
         if err:
             self._send_error_json(err, 400)
             return
 
-        app_id = payload.get("id")
-        source = payload.get("source")
-        folder_name = payload.get("folder_name")
-
-        if not app_id or not isinstance(app_id, str):
-            self._send_error_json("id is required", 400)
-            return
-        if not source or source not in ("brew_cask", "brew", "app_dir", "both"):
-            self._send_error_json("Invalid source parameter", 400)
+        target_id = payload.get("target_id")
+        if not isinstance(target_id, str) or not target_id:
+            self._send_error_json("target_id is required", 400)
             return
 
-        # Sanitize application name to prevent injection/traversal
-        clean_target = folder_name if (folder_name and isinstance(folder_name, str)) else app_id
-        # A Homebrew cask can also have an app bundle in /Applications.  Keep
-        # validating the folder name because it is passed to clean_mac.sh for
-        # residual-file removal after brew finishes.
-        if source in ("app_dir", "both", "brew_cask") and folder_name:
-            if not _validate_app_name(clean_target):
-                self._send_error_json("Invalid application name format", 400)
-                return
-        # Validate the Homebrew token too — it is passed to `brew uninstall`.
-        if source in ("brew", "brew_cask", "both"):
-            if not _validate_brew_name(app_id):
-                self._send_error_json("Invalid Homebrew package name format", 400)
-                return
+        # Never trust the browser's cached name/source/path.  Rediscover the
+        # catalog immediately before deleting and resolve one exact target.
+        try:
+            matches = [item for item in discover_applications()
+                       if item["target_id"] == target_id]
+        except Exception as exc:
+            sys.stderr.write(f"[ERROR] uninstall rediscovery: {exc}\n")
+            self._send_error_json("Could not verify the application target", 500)
+            return
+        if len(matches) != 1:
+            self._send_error_json(
+                "Application changed since the scan; refresh the list and try again",
+                409,
+            )
+            return
+        target = matches[0]
+        if target.get("protected"):
+            self._send_error_json("This macOS application is protected", 403)
+            return
 
-        success = True
-        msg = ""
+        source = target["source"]
+        app_id = target["id"]
+        app_path = target["path"] if source in ("app_dir", "both") else ""
+        bundle_id = target.get("bundle_id", "")
+        if app_path and not _is_allowed_app_path(app_path):
+            self._send_error_json("Application path failed safety validation", 409)
+            return
+        if source in ("brew_cask", "both") and not _validate_brew_name(app_id):
+            self._send_error_json("Homebrew package failed safety validation", 409)
+            return
+
         details = []
 
         # Homebrew MUST run first. `brew uninstall --cask` expects the .app
         # bundle to still exist; if clean_mac.sh deletes it first, the cask
         # uninstall fails. So: brew first, then residual-file cleanup.
         if source in ("brew_cask", "both"):
-            # `--` terminates option parsing so a package token can never be
-            # interpreted by brew as a flag.
-            cmd = ["brew", "uninstall", "--cask", "--", app_id]
-            ok, out, err_out = self._run_cmd(cmd)
+            brew = shutil.which("brew")
+            if not brew:
+                self._send_error_json("Homebrew is no longer available", 409)
+                return
+            # Homebrew's cask metadata knows app-specific support files that a
+            # generic bundle-id matcher cannot.  `--zap` is appropriate here
+            # because the UI explicitly confirms removal of associated data.
+            cmd = [brew, "uninstall", "--cask", "--zap", "--", app_id]
+            ok, out, err_out = self._run_cmd(cmd, timeout=180)
             if not ok:
-                success = False
-                msg = f"Homebrew cask uninstallation failed: {err_out or out}"
-            else:
-                details.append("Homebrew cask uninstalled successfully.")
-
-        elif source == "brew":
-            cmd = ["brew", "uninstall", "--", app_id]
-            ok, out, err_out = self._run_cmd(cmd)
-            if not ok:
-                success = False
-                msg = f"Homebrew formula uninstallation failed: {err_out or out}"
-            else:
-                details.append("Homebrew formula uninstalled successfully.")
+                reason = (err_out or out or "unknown Homebrew error").strip()
+                self._send_error_json(f"Homebrew cask uninstallation failed: {reason}")
+                return
+            details.append("Homebrew cask uninstalled successfully.")
 
         # Then run clean_mac.sh to remove any remaining .app bundle and clean
-        # leftovers. Skipped if the brew step above already failed.
-        if source in ("app_dir", "both", "brew_cask") and success:
-            # Run clean_mac.sh category 11 (app_uninstaller).  This is also
-            # required for casks: brew may remove its receipt/version data
-            # without removing a separately-installed or stale .app bundle.
-            data, script_err = self._run_script(["--clean-json", "11", "--app-uninstaller-sub", clean_target])
+        # exact-name/bundle-id leftovers.  The explicit path avoids comma/name
+        # parsing and remains valid as identity even if brew just removed it.
+        if app_path:
+            args = ["--clean-json", "11", "--app-uninstaller-path", app_path]
+            if _validate_bundle_id(bundle_id):
+                args += ["--app-uninstaller-bundle-id", bundle_id]
+            data, script_err = self._run_script(args, timeout=180)
             if script_err:
-                success = False
-                msg = f"Leftovers cleanup failed: {script_err}"
-            else:
-                details.append("Application files and leftovers deleted successfully.")
+                self._send_error_json(f"Application cleanup failed: {script_err}")
+                return
+            if not isinstance(data, dict) or data.get("success") is not True:
+                errors = data.get("errors", []) if isinstance(data, dict) else []
+                messages = [entry.get("message", "") for entry in errors
+                            if isinstance(entry, dict) and entry.get("message")]
+                reason = "; ".join(messages) or "one or more files could not be removed"
+                self._send_error_json(f"Application cleanup failed: {reason}")
+                return
+            if os.path.lexists(app_path):
+                self._send_error_json(
+                    "The application bundle is still present (permission denied or app in use)"
+                )
+                return
+            details.append("Application and exact associated files moved to Trash.")
 
-        if success:
-            self._send_json({
-                "success": True,
-                "message": "Uninstalled successfully.",
-                "details": " ".join(details)
-            })
-        else:
-            self._send_error_json(msg or "Uninstallation failed.")
+        self._send_json({
+            "success": True,
+            "message": "Uninstalled successfully.",
+            "details": " ".join(details),
+        })
 
     # ── Static File Server ──────────────────────────────────
     def _serve_static(self, path):

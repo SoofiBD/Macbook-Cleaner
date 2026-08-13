@@ -16,6 +16,36 @@ Clean Mac safely removes unnecessary data on macOS such as caches, logs, tempora
 
 ---
 
+## 🍺 Homebrew
+
+The Formula is ready for the `SoofiBD/apple-cleanup` tap. After that tap is
+published, install and run Apple Cleanup with:
+
+```bash
+brew install SoofiBD/apple-cleanup/apple-cleanup
+apple-cleanup          # web dashboard
+apple-cleanup-cli      # terminal interface
+```
+
+Until the tap repository is published, maintainers can test a committed local
+clone as a tap (run these commands from the repository root):
+
+```bash
+brew tap SoofiBD/apple-cleanup "file://$(pwd)"
+brew install SoofiBD/apple-cleanup/apple-cleanup
+```
+
+Homebrew removes the ZIP, permission-fixing, and project-directory steps. It
+cannot grant macOS privacy permissions: for protected locations, give your
+terminal app Full Disk Access under **System Settings → Privacy & Security →
+Full Disk Access**.
+
+`brew uninstall apple-cleanup` removes the installed application files but
+keeps runtime history and logs in `~/.cache/apple-cleanup`. If weekly cleanup
+was enabled, its plist in `~/Library/LaunchAgents/` is also kept.
+
+---
+
 ## 🖱️ Easy Setup & Usage (No technical knowledge needed)
 
 You don't need to know the Terminal. Three steps:
@@ -123,6 +153,8 @@ The script targets a wide array of system and user items, categorized by safety 
 
 ```
 apple-cleanup/
+├── Formula/
+│   └── apple-cleanup.rb      # Homebrew Formula
 ├── CLICK_TO_START.command    # Double-click launcher (fixes perms/quarantine)
 ├── Internal_Launcher.command # Background: runs the server
 ├── clean_mac.sh              # Main cleanup script
@@ -170,11 +202,13 @@ tab (loopback + session-token protected, like every other write endpoint):
 ## ⚠️ Safety Notes
 
 - The script only removes caches, logs, and temporary files by default.
+- The app uninstaller moves app bundles and exact associated files to Trash;
+  Homebrew casks use `brew uninstall --cask --zap` first.
 - macOS will recreate many of these files as needed.
 - The `Downloads` folder is not touched.
 - System Cache cleanup requires `sudo` (terminal mode).
 - The web dashboard skips categories that require `sudo` unless explicitly enabled.
-- **Dry-run preview:** set `APPLE_CLEANUP_DRYRUN=1` (or tick *Önizleme* in the
+- **Dry-run preview:** set `APPLE_CLEANUP_DRYRUN=1` (or enable *Preview* in the
   dashboard) to see exactly what would be removed — nothing is deleted.
 - **Exclusion list:** set `APPLE_CLEANUP_EXCLUDE` to a colon-separated list of
   paths/globs to protect from deletion, e.g.
@@ -188,6 +222,10 @@ The dashboard exposes an API that can delete files, so it is locked down:
 - Rejects requests whose `Host`/`Origin` is not loopback (anti DNS-rebinding/CSRF).
 - Requires a **per-session token** (regenerated on each start) on every
   destructive request; no wildcard CORS is sent.
+- Re-discovers an uninstall target immediately before removal and rejects
+  changed, symlinked, out-of-scope, or protected app bundles.
+- Serializes destructive operations so cleanup, restore, and uninstall cannot
+  race one another.
 
 ---
 

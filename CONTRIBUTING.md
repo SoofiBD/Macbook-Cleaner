@@ -36,7 +36,7 @@ If you think a change genuinely needs a dependency, open an issue to discuss it
 | `web/server.py` | Local Python dashboard server |
 | `web/index.html`, `style.css`, `script.js` | Dashboard UI (vanilla) |
 | `web/vendor/` | Locally vendored GSAP — no CDN |
-| `tests/` | Python `unittest` + Node `node:test` suites |
+| `tests/` | Python `pytest` + Node `node:test` suites |
 
 ## Getting Started
 
@@ -44,8 +44,8 @@ If you think a change genuinely needs a dependency, open an issue to discuss it
 2. Create a branch off `main`: `git checkout -b fix/short-description`.
 3. Make your change, keeping it focused and small.
 
-You need only what macOS already ships: `bash`, `python3`, and (for the JS test)
-`node`. Nothing to install.
+The application itself has no package dependencies. Contributors additionally
+need `pytest` and Node.js to run the test suites.
 
 ## Running the Test Suite Locally
 
@@ -59,16 +59,17 @@ Run **all** of these before opening a PR — CI runs the same checks.
 shellcheck --shell=bash clean_mac.sh
 ```
 
-**2. Python unit tests** (built-in `unittest`, no dependencies):
+**2. Python tests:**
 
 ```bash
-python3 -m unittest discover -s tests -p "test_*.py" -v
+python3 -m pip install pytest
+python3 -m pytest
 ```
 
 **3. JavaScript unit tests** (Node's built-in test runner):
 
 ```bash
-node --test tests/
+node --test tests/*.mjs
 ```
 
 **4. Smoke-test the app** by double-clicking `CLICK_TO_START.command`, or run the

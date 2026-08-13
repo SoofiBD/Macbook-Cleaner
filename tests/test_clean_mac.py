@@ -1,6 +1,7 @@
 # tests/test_clean_mac.py
 import json
 import os
+import plistlib
 import subprocess
 from pathlib import Path
 
@@ -162,6 +163,78 @@ def test_app_uninstaller_unknown_app_is_safe(tmp_path):
         "empty bundle id must not delete Library subdirectories"
 
 
+def _write_fake_app(path: Path, bundle_id="com.example.FancyApp") -> None:
+    contents = path / "Contents"
+    contents.mkdir(parents=True)
+    with (contents / "Info.plist").open("wb") as handle:
+        plistlib.dump({
+            "CFBundleIdentifier": bundle_id,
+            "CFBundleName": path.stem,
+            "CFBundleShortVersionString": "1.0",
+        }, handle)
+
+
+def _run_explicit_uninstall(home: Path, app: Path, bundle_id: str, trash_ok: bool):
+    env = dict(os.environ, HOME=str(home), APPLE_CLEANUP_NO_OPLOG="1")
+    if trash_ok:
+        trash_impl = (
+            '_trash_item() { local d="$HOME/.Trash/$(basename "$1").$$.$RANDOM"; '
+            'mkdir -p "$HOME/.Trash"; mv "$1" "$d"; echo "$d"; }'
+        )
+    else:
+        trash_impl = '_trash_item() { return 1; }'
+    command = (
+        f'source "{SCRIPT}" --__noop; {trash_impl}; '
+        f'APP_UNINSTALLER_PATH={json.dumps(str(app))}; '
+        f'APP_UNINSTALLER_BUNDLE_ID={json.dumps(bundle_id)}; '
+        'do_clean_json 11'
+    )
+    out = subprocess.run(
+        ["bash", "-c", command], env=env, capture_output=True,
+        text=True, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
+def test_explicit_uninstaller_trashes_app_and_exact_leftovers(tmp_path):
+    bundle_id = "com.example.FancyApp"
+    app = tmp_path / "Applications/My, Fancy App.app"
+    _write_fake_app(app, bundle_id)
+    leftovers = [
+        tmp_path / "Library/Application Support/My, Fancy App",
+        tmp_path / f"Library/Caches/{bundle_id}",
+        tmp_path / f"Library/WebKit/{bundle_id}",
+        tmp_path / f"Library/Application Scripts/{bundle_id}",
+    ]
+    for path in leftovers:
+        make_dir_with_bytes(path, kb=1)
+
+    data = _run_explicit_uninstall(tmp_path, app, bundle_id, trash_ok=True)
+
+    assert data["success"] is True, data
+    assert not app.exists()
+    assert all(not path.exists() for path in leftovers)
+    assert data["items_cleaned"] == 1 + len(leftovers)
+
+
+def test_uninstaller_reports_permission_failure_and_preserves_data(tmp_path):
+    bundle_id = "com.example.BlockedApp"
+    app = tmp_path / "Applications/Blocked App.app"
+    _write_fake_app(app, bundle_id)
+    leftover = tmp_path / "Library/Application Support/Blocked App"
+    make_dir_with_bytes(leftover, kb=1)
+
+    data = _run_explicit_uninstall(tmp_path, app, bundle_id, trash_ok=False)
+
+    assert data["success"] is False
+    assert data["details"][0]["category"] == "app_uninstaller"
+    assert data["details"][0]["status"] == "error"
+    assert data["errors"]
+    assert app.exists(), "failed bundle removal must be reported"
+    assert leftover.exists(), "live app data must remain after bundle failure"
+
+
 def test_developer_subitems_include_new_caches(tmp_path):
     # Gradle cache fixture → developer subitems içinde gradle_cache görünmeli
     make_dir_with_bytes(tmp_path / ".gradle/caches/modules", kb=2048)
@@ -276,3 +349,47 @@ def test_safe_rm_contents_handles_trash_failure(tmp_path):
     assert out.returncode == 0, out.stderr
 
 
+def test_partial_direct_cleanup_reports_english_warning_and_keeps_success(tmp_path):
+    target = tmp_path / "temp"
+    target.mkdir()
+    removable = target / "removable.bin"
+    blocked = target / "blocked.bin"
+    removable.write_bytes(b"x" * 4096)
+    blocked.write_bytes(b"y" * 4096)
+
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_FORCE_RM="1")
+    command = f'''
+source "{SCRIPT}" --__noop
+scan_all() {{ :; }}
+rm() {{
+  local arg
+  for arg in "$@"; do
+    case "$arg" in *blocked.bin) return 1 ;; esac
+  done
+  command rm "$@"
+}}
+clean_temp_files() {{
+  _CURRENT_NEEDS_SUDO=0
+  _CURRENT_IS_TRASH_EMPTY=1
+  safe_rm_contents {json.dumps(str(target))} "User Temp"
+  _CURRENT_IS_TRASH_EMPTY=0
+}}
+do_clean_json 5
+'''
+    out = subprocess.run(
+        ["bash", "-c", command], env=env,
+        capture_output=True, text=True, timeout=30,
+    )
+    assert out.returncode == 0, out.stderr
+    data = json.loads(out.stdout)
+
+    assert data["success"] is True
+    assert data["details"][0]["status"] == "partial"
+    assert data["errors"] == []
+    assert data["warnings"] == [{
+        "category": "temp_files",
+        "message": "User Temp: some active or protected files were skipped",
+    }]
+    assert data["estimated_bytes"] > 0
+    assert not removable.exists()
+    assert blocked.exists()

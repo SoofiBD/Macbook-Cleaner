@@ -2,8 +2,19 @@
 import sys
 import os
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'web'))
+
+
+class TestScriptPath(unittest.TestCase):
+    def test_homebrew_launcher_can_supply_stable_opt_path(self):
+        from server import _get_script_path
+
+        configured = "/opt/homebrew/opt/apple-cleanup/libexec/clean_mac.sh"
+        with patch.dict(os.environ, {"APPLE_CLEANUP_SCRIPT_PATH": configured}):
+            self.assertEqual(str(_get_script_path()), configured)
 
 
 class TestValidateAppLeftover(unittest.TestCase):
@@ -115,6 +126,86 @@ class TestValidateBrewName(unittest.TestCase):
         self.assertFalse(self.v("pkg;rm -rf /"))
         self.assertFalse(self.v("pkg`id`"))
         self.assertFalse(self.v(""))
+
+
+class TestCategoryValidation(unittest.TestCase):
+    def setUp(self):
+        from server import _coerce_categories
+        self.v = _coerce_categories
+
+    def test_accepts_integer_and_digit_string_ids(self):
+        self.assertEqual(self.v([1, "11", 17]), [1, 11, 17])
+
+    def test_rejects_out_of_range_duplicate_and_boolean_ids(self):
+        self.assertIsNone(self.v([0]))
+        self.assertIsNone(self.v([18]))
+        self.assertIsNone(self.v([1, 1]))
+        self.assertIsNone(self.v([True]))
+        self.assertIsNone(self.v(["1;rm"]))
+
+
+class TestExclusiveOperation(unittest.TestCase):
+    def test_rejects_overlapping_mutations(self):
+        import server
+
+        class Dummy:
+            called = False
+            error = None
+
+            def _send_error_json(self, message, status=500):
+                self.error = (message, status)
+
+            @server._exclusive_operation
+            def mutate(self):
+                self.called = True
+
+        dummy = Dummy()
+        server._operation_lock.acquire()
+        try:
+            dummy.mutate()
+        finally:
+            server._operation_lock.release()
+        self.assertFalse(dummy.called)
+        self.assertEqual(dummy.error[1], 409)
+
+
+class TestApplicationDiscovery(unittest.TestCase):
+    def test_discovers_nested_app_but_not_embedded_helper(self):
+        import plistlib
+        import tempfile
+        from pathlib import Path
+        from unittest.mock import patch
+        import server
+
+        root = Path(tempfile.mkdtemp()) / "Applications"
+        app = root / "Vendor" / "Fancy App.app"
+        contents = app / "Contents"
+        contents.mkdir(parents=True)
+        with (contents / "Info.plist").open("wb") as handle:
+            plistlib.dump({
+                "CFBundleIdentifier": "com.example.fancy",
+                "CFBundleName": "Fancy App",
+                "CFBundleShortVersionString": "2.0",
+            }, handle)
+        helper = app / "Contents/Library/LoginItems/Helper.app/Contents"
+        helper.mkdir(parents=True)
+
+        with patch.object(server, "_application_roots", return_value=(root,)), \
+             patch.object(server.shutil, "which", return_value=None):
+            apps = server.discover_applications()
+
+        self.assertEqual(len(apps), 1)
+        self.assertEqual(apps[0]["path"], str(app))
+        self.assertEqual(apps[0]["bundle_id"], "com.example.fancy")
+        self.assertEqual(apps[0]["target_id"], f"app:{app}")
+        self.assertFalse(apps[0]["protected"])
+
+    def test_extracts_homebrew_app_artifacts(self):
+        from server import _cask_app_artifacts
+        self.assertEqual(
+            _cask_app_artifacts({"artifacts": [{"app": ["Visual Studio Code.app"]}]}),
+            {"visual studio code"},
+        )
 
 
 class TestValidateProjectArtifact(unittest.TestCase):
@@ -419,7 +510,21 @@ class TestRunScriptResilience(unittest.TestCase):
         finally:
             server_mod.SCRIPT_PATH = old_script_path
 
+    def test_run_script_forces_english_messages(self):
+        import server
+
+        handler = server.CleanupHandler.__new__(server.CleanupHandler)
+        completed = SimpleNamespace(
+            stdout='{"success": true}', stderr="", returncode=0)
+        with patch.object(server.subprocess, "run", return_value=completed) as run:
+            data, err = handler._run_script(
+                ["--status-json"], env_extra={"APPLE_CLEANUP_LANG": "tr"})
+
+        self.assertIsNone(err)
+        self.assertTrue(data["success"])
+        self.assertEqual(
+            run.call_args.kwargs["env"]["APPLE_CLEANUP_LANG"], "en")
+
 
 if __name__ == "__main__":
     unittest.main()
-

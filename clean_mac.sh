@@ -14,7 +14,7 @@
 #   --launchagents-clean    Clean invalid LaunchAgents
 #   --thin-snapshots-json   Thin local TM snapshots, return JSON
 #   --spotlight-reindex     Rebuild Spotlight index
-#   --lang en|tr            Set UI language (default: tr)
+#   --lang en|tr            Set UI language (default: en)
 set -euo pipefail
 
 # Force a dot decimal separator regardless of the user's regional locale.
@@ -26,7 +26,7 @@ export LC_NUMERIC=C
 
 # ─── Localization Engine (Bash 3.2 compatible — no assoc arrays) ─────────────
 # Default language; override via --lang <code> or APPLE_CLEANUP_LANG env var
-LANG_KEY="${APPLE_CLEANUP_LANG:-tr}"
+LANG_KEY="${APPLE_CLEANUP_LANG:-en}"
 
 L() {
   local key="$1"
@@ -74,6 +74,8 @@ L() {
     en::excluded)             echo "excluded (protected)" ;;
     tr::delete_failed)        echo "silinemedi" ;;
     en::delete_failed)        echo "could not be deleted" ;;
+    tr::partial_skipped)      echo "bazı etkin veya korumalı dosyalar atlandı" ;;
+    en::partial_skipped)      echo "some active or protected files were skipped" ;;
     tr::empty_path)           echo "Boş path, atlanıyor" ;;
     en::empty_path)           echo "Empty path, skipping" ;;
     tr::protected_path)       echo "Korunan sistem yolu, dokunulmadı" ;;
@@ -351,6 +353,8 @@ TOTAL_FREED=0
 TOTAL_ITEMS=0
 JSON_MODE=false
 CLEAN_RESULTS=()
+CLEAN_ERRORS=()
+CLEAN_WARNINGS=()
 
 # When set to 1, bypass trash-first and use rm -rf directly (for CI/testing)
 FORCE_RM="${APPLE_CLEANUP_FORCE_RM:-0}"
@@ -388,6 +392,8 @@ BROWSER_FULL_CLEAN=""
 DEVELOPER_CLEAN=""
 IOS_BACKUPS_CLEAN=""
 APP_UNINSTALLER_CLEAN=""
+APP_UNINSTALLER_PATH=""
+APP_UNINSTALLER_BUNDLE_ID=""
 PROJECT_ARTIFACT_CLEAN=""
 
 MAIL_DOWNLOADS_DIR="$HOME/Library/Containers/com.apple.mail/Data/Library/Mail Downloads"
@@ -552,6 +558,35 @@ success() { echo -e "  ${GREEN}✓${NC}  $1"; }
 warn()    { echo -e "  ${YELLOW}⚠${NC}  $1"; }
 err()     { echo -e "  ${RED}✗${NC}  $1" >&2; }
 
+# Keep destructive-operation failures machine-readable in JSON mode.  The
+# original implementation printed errors to stderr and then always emitted
+# `success: true`, which made permission failures look like successful cleans.
+record_clean_error() {
+  local message="$1"
+  CLEAN_ERRORS+=("${_CURRENT_CATEGORY:-unknown}|$message")
+}
+
+record_clean_warning() {
+  local message="$1"
+  CLEAN_WARNINGS+=("${_CURRENT_CATEGORY:-unknown}|$message")
+}
+
+clean_error_count() {
+  local count=0 entry
+  for entry in ${CLEAN_ERRORS[@]+"${CLEAN_ERRORS[@]}"}; do
+    count=$((count + 1))
+  done
+  echo "$count"
+}
+
+clean_warning_count() {
+  local count=0 entry
+  for entry in ${CLEAN_WARNINGS[@]+"${CLEAN_WARNINGS[@]}"}; do
+    count=$((count + 1))
+  done
+  echo "$count"
+}
+
 # ─── Size Helpers ────────────────────────────────────────────────────────────
 # Note: bc already rounds to one decimal with a dot ("6.3"), so we print it
 # with %s rather than feeding it back through printf "%.1f". The latter parses
@@ -711,10 +746,16 @@ _CURRENT_CATEGORY=""
 safe_rm() {
   local path="$1"
   local label="${2:-$1}"
-  [ -z "$path" ] && { err "$(L empty_path): $label"; return 1; }
+  [ -z "$path" ] && {
+    err "$(L empty_path): $label"
+    record_clean_error "$(L empty_path): $label"
+    return 0
+  }
   case "$path" in
     /System/*|/usr/*|/bin/*|/sbin/*|/etc/*|/private/etc/*)
-      err "$(L protected_path): $path"; return 1 ;;
+      err "$(L protected_path): $path"
+      record_clean_error "$(L protected_path): $path"
+      return 0 ;;
   esac
   if _is_excluded "$path"; then
     info "$(L excluded): $label"
@@ -740,14 +781,20 @@ safe_rm() {
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
         oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
-      } || err "$label $(L delete_failed)"
+      } || {
+        err "$label $(L delete_failed)"
+        record_clean_error "$label $(L delete_failed)"
+      }
     else
       rm -rf "$path" 2>/dev/null && {
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
         oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
-      } || err "$label $(L delete_failed)"
+      } || {
+        err "$label $(L delete_failed)"
+        record_clean_error "$label $(L delete_failed)"
+      }
     fi
   else
     # Trash-first (user files, non-sudo)
@@ -759,6 +806,7 @@ safe_rm() {
       oplog_record "trash" "$sz_b" "$path" "$_td" "$_CURRENT_CATEGORY"
     else
       err "$label $(L delete_failed)"
+      record_clean_error "$label $(L delete_failed)"
     fi
   fi
 }
@@ -767,9 +815,15 @@ safe_rm_contents() {
   local path="$1"
   local label="${2:-$1}"
   [ -d "$path" ] || return 0
-  [ -z "$path" ] && return 1
+  [ -z "$path" ] && {
+    record_clean_error "$(L empty_path): $label"
+    return 0
+  }
   case "$path" in
-    /System/*|/usr/*|/bin/*|/sbin/*|/etc/*|/private/etc/*) err "$(L protected_path): $path"; return 1 ;;
+    /System/*|/usr/*|/bin/*|/sbin/*|/etc/*|/private/etc/*)
+      err "$(L protected_path): $path"
+      record_clean_error "$(L protected_path): $path"
+      return 0 ;;
   esac
   # Exclusion-aware mode: when the user defined protected paths, delete each
   # child individually (via safe_rm, which honors excludes + dry-run) so a
@@ -793,25 +847,52 @@ safe_rm_contents() {
   fi
 
   if _should_force_rm "$_CURRENT_NEEDS_SUDO" "$_CURRENT_IS_TRASH_EMPTY"; then
-    # Direct rm -rf (sudo paths, trash emptying, or CI mode)
-    if $SUDO_AVAILABLE && [ "$_CURRENT_NEEDS_SUDO" -eq 1 ]; then
-      sudo find "$path" -maxdepth 1 -mindepth 1 -exec rm -rf {} + 2>/dev/null && {
-        success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
-        TOTAL_FREED=$((TOTAL_FREED + sz_b))
-        TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-        oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
-      } || err "$label $(L delete_failed)"
-    else
-      find "$path" -maxdepth 1 -mindepth 1 -exec rm -rf {} + 2>/dev/null && {
-        success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
-        TOTAL_FREED=$((TOTAL_FREED + sz_b))
-        TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-        oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
-      } || err "$label $(L delete_failed)"
+    # Delete children independently. macOS may keep a few live service files
+    # open or recreate them during cleanup; one such item must not turn all
+    # successfully removed siblings into a category-wide failure.
+    local removed_any=false
+    local delete_failed=false
+    local removed_bytes=0
+    local child child_sz
+    while IFS= read -r -d '' child; do
+      child_sz=$(get_size_bytes "$child")
+      local child_removed=false
+      if $SUDO_AVAILABLE && [ "$_CURRENT_NEEDS_SUDO" -eq 1 ]; then
+        sudo rm -rf "$child" 2>/dev/null && child_removed=true
+      else
+        rm -rf "$child" 2>/dev/null && child_removed=true
+      fi
+      # A live service can race the command and remove the path first. Treat a
+      # path that is now absent as successfully cleaned regardless of rm's code.
+      if $child_removed || { [ ! -e "$child" ] && [ ! -L "$child" ]; }; then
+        removed_any=true
+        removed_bytes=$((removed_bytes + child_sz))
+        oplog_record "delete" "$child_sz" "$child" "" "$_CURRENT_CATEGORY"
+      else
+        delete_failed=true
+      fi
+    done < <(find "$path" -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
+
+    if $removed_any; then
+      local removed_h; removed_h=$(format_bytes "$removed_bytes")
+      success "$label: ${BOLD}${removed_h}${NC} $(L deleted)"
+      TOTAL_FREED=$((TOTAL_FREED + removed_bytes))
+      TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+    fi
+    if $delete_failed; then
+      if $removed_any; then
+        warn "$label: $(L partial_skipped)"
+        record_clean_warning "$label: $(L partial_skipped)"
+      else
+        err "$label $(L delete_failed)"
+        record_clean_error "$label $(L delete_failed)"
+      fi
     fi
   else
     # Trash-first: move each child item to trash individually
     local trashed_any=false
+    local trash_failed=false
+    local trashed_bytes=0
     local child _td
     while IFS= read -r -d '' child; do
       # Capture size BEFORE trashing; afterwards the child is gone and any size
@@ -820,13 +901,26 @@ safe_rm_contents() {
       _td="$(_trash_item "$child" || true)"
       if [ -n "$_td" ] || [ ! -e "$child" ]; then
         trashed_any=true
+        trashed_bytes=$((trashed_bytes + child_sz))
         oplog_record "trash" "$child_sz" "$child" "$_td" "$_CURRENT_CATEGORY"
+      else
+        trash_failed=true
       fi
     done < <(find "$path" -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
     if $trashed_any; then
-      success "$label: ${BOLD}${sz_h}${NC} $(L trashed)"
-      TOTAL_FREED=$((TOTAL_FREED + sz_b))
+      local trashed_h; trashed_h=$(format_bytes "$trashed_bytes")
+      success "$label: ${BOLD}${trashed_h}${NC} $(L trashed)"
+      TOTAL_FREED=$((TOTAL_FREED + trashed_bytes))
       TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+    fi
+    if $trash_failed; then
+      if $trashed_any; then
+        warn "$label: $(L partial_skipped)"
+        record_clean_warning "$label: $(L partial_skipped)"
+      else
+        err "$label $(L delete_failed)"
+        record_clean_error "$label $(L delete_failed)"
+      fi
     fi
   fi
 }
@@ -860,6 +954,33 @@ is_browser_cache_dir() {
 }
 
 # ─── App Installation Heuristic ──────────────────────────────────────────────
+_INSTALLED_APP_INDEX_READY=0
+_INSTALLED_APP_COUNT=0
+_INSTALLED_APP_NAMES=()
+_INSTALLED_APP_BUNDLE_IDS=()
+
+normalize_app_token() {
+  printf '%s' "$1" | LC_ALL=C tr '[:upper:]' '[:lower:]' | tr -cd '[:alnum:]'
+}
+
+build_installed_app_index() {
+  [ "$_INSTALLED_APP_INDEX_READY" -eq 1 ] && return 0
+  _INSTALLED_APP_INDEX_READY=1
+  local app name display bid token
+  while IFS= read -r -d '' app; do
+    [ -L "$app" ] && continue
+    name=$(basename "$app" .app)
+    display=$(get_app_display_name "$app")
+    bid=$(get_app_bundle_id "$app")
+    token=$(normalize_app_token "$name")
+    [ -n "$token" ] && _INSTALLED_APP_NAMES+=("$token")
+    token=$(normalize_app_token "$display")
+    [ -n "$token" ] && _INSTALLED_APP_NAMES+=("$token")
+    [ -n "$bid" ] && _INSTALLED_APP_BUNDLE_IDS+=("$(printf '%s' "$bid" | tr '[:upper:]' '[:lower:]')")
+    _INSTALLED_APP_COUNT=$((_INSTALLED_APP_COUNT + 1))
+  done < <(find /Applications "$HOME/Applications" -maxdepth 3 -name "*.app" -prune -print0 2>/dev/null)
+}
+
 get_app_name_for_dir() {
   local dir_name="$1"
   case "$dir_name" in
@@ -901,6 +1022,33 @@ is_app_installed() {
       return 0
       ;;
   esac
+
+  # Recently-written app data is active evidence, even when an unusual bundle
+  # name prevents a direct match.  This mirrors the conservative reference
+  # scanner: false negatives are preferable to deleting live settings.
+  local support_path="$HOME/Library/Application Support/$dir_name"
+  if [ -e "$support_path" ] && [ "$(dir_age_days "$support_path")" -lt 60 ]; then
+    return 0
+  fi
+
+  build_installed_app_index
+  # If application enumeration is clearly incomplete, do not guess that user
+  # data is orphaned.
+  [ "$_INSTALLED_APP_COUNT" -ge 5 ] || return 0
+
+  local lower token installed
+  lower=$(printf '%s' "$dir_name" | tr '[:upper:]' '[:lower:]')
+  token=$(normalize_app_token "$dir_name")
+  for installed in ${_INSTALLED_APP_BUNDLE_IDS[@]+"${_INSTALLED_APP_BUNDLE_IDS[@]}"}; do
+    [ "$lower" = "$installed" ] && return 0
+  done
+  if [ "${#token}" -ge 4 ]; then
+    for installed in ${_INSTALLED_APP_NAMES[@]+"${_INSTALLED_APP_NAMES[@]}"}; do
+      [ "$token" = "$installed" ] && return 0
+      case "$installed" in *"$token"*) return 0 ;; esac
+      case "$token" in *"$installed"*) return 0 ;; esac
+    done
+  fi
 
   local app_name; app_name=$(get_app_name_for_dir "$dir_name")
   
@@ -946,6 +1094,7 @@ scan_app_leftovers() {
       iCloud|Knowledge|Network|VirtualMachines|DiskImages|\
       Google|Firefox|BraveSoftware|"Microsoft Edge"|com.operasoftware.Opera|Arc) continue ;;
     esac
+    is_app_installed "$base" && continue
     s=$(get_size_bytes "$item") 2>/dev/null || s=0
     [ -z "$s" ] && s=0
     total=$((total + s))
@@ -1035,23 +1184,19 @@ scan_ios_backups() {
 scan_app_uninstaller() {
   local total=0
   local app app_name bundle_id s
-  # Mirror scan_app_uninstaller_subitems_json: scan both app dirs and use the
-  # same leftover-path set so the summary size matches the per-app breakdown.
-  local scan_dirs=("/Applications")
-  [ -d "$HOME/Applications" ] && scan_dirs+=("$HOME/Applications")
-  local d
-  for d in "${scan_dirs[@]}"; do
-    while IFS= read -r -d '' app; do
-      app_name=$(basename "$app" .app)
-      bundle_id=$(get_app_bundle_id "$app")
-      local dir
-      while IFS= read -r -d '' dir; do
-        [ -e "$dir" ] || continue
-        s=$(get_size_bytes "$dir") || s=0
-        total=$((total + s))
-      done < <(app_leftover_paths "$app_name" "$bundle_id")
-    done < <(find "$d" -maxdepth 1 -name "*.app" -print0 2>/dev/null)
-  done
+  # Include shallow vendor folders while pruning each package so helper apps
+  # inside Contents never appear as independently uninstallable applications.
+  while IFS= read -r -d '' app; do
+    [ -L "$app" ] && continue
+    app_name=$(basename "$app" .app)
+    bundle_id=$(get_app_bundle_id "$app")
+    local dir
+    while IFS= read -r -d '' dir; do
+      [ -e "$dir" ] || continue
+      s=$(get_size_bytes "$dir") || s=0
+      total=$((total + s))
+    done < <(app_leftover_paths "$app_name" "$bundle_id")
+  done < <(find /Applications "$HOME/Applications" -maxdepth 3 -name "*.app" -prune -print0 2>/dev/null)
   local i; i=$(cat_index_by_id app_uninstaller)
   CAT_SIZES[$i]=$total
 }
@@ -1415,46 +1560,77 @@ clean_ios_backups() {
 
 clean_app_uninstaller() {
   _CURRENT_NEEDS_SUDO=0
-  # An uninstaller must remove the app, not merely move it to ~/.Trash.  A
-  # bundle left in Trash can still be launched from Finder, which makes the
-  # uninstall appear to have failed.  Keep the permanent-delete mode scoped
-  # to this category; normal cache cleanup remains recoverable via Trash.
-  local _prev_trash_mode="$_CURRENT_IS_TRASH_EMPTY"
-  _CURRENT_IS_TRASH_EMPTY=1
+  # Finder's Trash path can request macOS authorization for root-owned apps in
+  # /Applications and keeps the operation recoverable.  The old forced rm path
+  # had neither property and silently failed for the most common installation
+  # layout.
+  _CURRENT_IS_TRASH_EMPTY=0
   header "$(L hdr_app_uninstaller)"
   if $JSON_MODE; then
-    if [ -z "$APP_UNINSTALLER_CLEAN" ]; then
+    if [ -z "$APP_UNINSTALLER_PATH" ] && [ -z "$APP_UNINSTALLER_CLEAN" ]; then
       info "$(L no_app_specified)"
-      _CURRENT_IS_TRASH_EMPTY="$_prev_trash_mode"
       return
     fi
 
-    # ── Robust comma parsing ──
-    local parsed_apps=()
-    IFS=',' read -ra parsed_apps <<< "$APP_UNINSTALLER_CLEAN"
-
-    local app_name
-    for app_name in "${parsed_apps[@]}"; do
-      app_name="${app_name## }"; app_name="${app_name%% }"
-      [ -z "$app_name" ] && continue
-      case "$app_name" in
-        */*|*..*)
-          err "$(L invalid_path_traversal): $app_name"
-          continue
-          ;;
-      esac
-      local app_path=""
-      if [ -d "/Applications/$app_name.app" ]; then
-        app_path="/Applications/$app_name.app"
-      elif [ -d "$HOME/Applications/$app_name.app" ]; then
-        app_path="$HOME/Applications/$app_name.app"
+    local app_paths=()
+    if [ -n "$APP_UNINSTALLER_PATH" ]; then
+      if ! is_valid_app_bundle_path "$APP_UNINSTALLER_PATH"; then
+        record_clean_error "Invalid application bundle path"
+        return
       fi
+      app_paths+=("$APP_UNINSTALLER_PATH")
+    else
+      # Backwards-compatible path for the scan-results cleaner.  The dedicated
+      # uninstaller endpoint uses the explicit, server-verified path above.
+      local parsed_apps=()
+      IFS=',' read -ra parsed_apps <<< "$APP_UNINSTALLER_CLEAN"
+      local legacy_name legacy_path
+      for legacy_name in "${parsed_apps[@]}"; do
+        legacy_name="${legacy_name## }"; legacy_name="${legacy_name%% }"
+        [ -z "$legacy_name" ] && continue
+        case "$legacy_name" in
+          */*|*..*)
+            record_clean_error "$(L invalid_path_traversal): $legacy_name"
+            continue
+            ;;
+        esac
+        legacy_path=""
+        [ -d "/Applications/$legacy_name.app" ] && legacy_path="/Applications/$legacy_name.app"
+        [ -z "$legacy_path" ] && [ -d "$HOME/Applications/$legacy_name.app" ] \
+          && legacy_path="$HOME/Applications/$legacy_name.app"
+        if [ -n "$legacy_path" ]; then
+          app_paths+=("$legacy_path")
+        else
+          record_clean_error "Application is no longer installed: $legacy_name"
+        fi
+      done
+    fi
+
+    local app_path app_name bundle_id
+    for app_path in ${app_paths[@]+"${app_paths[@]}"}; do
+      app_name=$(basename "$app_path" .app)
       # Resolve the real bundle id from Info.plist BEFORE deleting the .app,
       # so leftovers keyed by bundle id can still be located afterwards.
-      local bundle_id=""
+      bundle_id=""
       if [ -n "$app_path" ] && [ -d "$app_path" ]; then
         bundle_id=$(get_app_bundle_id "$app_path")
+      elif is_valid_bundle_id "$APP_UNINSTALLER_BUNDLE_ID"; then
+        # Homebrew may already have removed the bundle.  The server captured
+        # this id during its fresh pre-delete discovery so exact-id leftovers
+        # can still be removed safely.
+        bundle_id="$APP_UNINSTALLER_BUNDLE_ID"
+      fi
+      if is_protected_app_bundle_id "$bundle_id"; then
+        record_clean_error "Protected application cannot be removed: $app_name"
+        continue
+      fi
+      if [ -e "$app_path" ] || [ -L "$app_path" ]; then
         safe_rm "$app_path" "App: $app_name"
+      fi
+      # Never erase an installed app's data after its bundle deletion failed.
+      # Dry-run is the exception: the bundle intentionally remains in place.
+      if [ "$DRYRUN" != "1" ] && { [ -e "$app_path" ] || [ -L "$app_path" ]; }; then
+        continue
       fi
       local dir
       while IFS= read -r -d '' dir; do
@@ -1463,11 +1639,9 @@ clean_app_uninstaller() {
         fi
       done < <(app_leftover_paths "$app_name" "$bundle_id")
     done
-    _CURRENT_IS_TRASH_EMPTY="$_prev_trash_mode"
     return
   fi
   info "$(L uninstaller_cli_only)"
-  _CURRENT_IS_TRASH_EMPTY="$_prev_trash_mode"
 }
 
 clean_mail_downloads() {
@@ -1988,43 +2162,40 @@ print_report() {
 # Emit the operation log as a JSON array, newest first. Malformed lines (no
 # numeric timestamp) are skipped. Empty/missing log yields [].
 do_history_json() {
-  echo -n "["
-  local first=true
-  if [ -f "$OPLOG_FILE" ]; then
-    local line ts session action bytes path dest category recoverable size_h nf
-    while IFS= read -r line; do
-      [ -z "$line" ] && continue
-      nf=$(awk -F'\t' '{print NF}' <<<"$line")
-      if [ "$nf" -eq 7 ]; then
-        # Bash 3.2's `read`/array splitting collapses empty fields with
-        # custom IFS (tab is IFS-whitespace), so fields are extracted via
-        # awk (which handles empty fields correctly) rather than `read`.
-        ts=$(awk -F'\t' '{print $1}' <<<"$line")
-        action=$(awk -F'\t' '{print $3}' <<<"$line")
-        bytes=$(awk -F'\t' '{print $4}' <<<"$line")
-        path=$(awk -F'\t' '{print $5}' <<<"$line")
-        category=$(awk -F'\t' '{print $7}' <<<"$line")
-      elif [ "$nf" -eq 5 ]; then
-        IFS=$'\t' read -r ts action bytes path category <<<"$line"
-        session=""; dest=""
-      else
-        continue
-      fi
-      [ -z "$ts" ] && continue
-      case "$ts" in *[!0-9]*) continue ;; esac
-      case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
-      recoverable="false"
-      [ "$action" = "trash" ] && recoverable="true"
-      size_h=$(format_bytes "$bytes")
-      $first || echo -n ","
-      first=false
-      printf '{"ts":%s,"action":"%s","bytes":%s,"size_human":"%s","path":"%s","category":"%s","recoverable":%s}' \
-        "$ts" "$(json_escape_str "$action")" "$bytes" \
-        "$(json_escape_str "$size_h")" "$(json_escape_str "$path")" \
-        "$(json_escape_str "${category:-}")" "$recoverable"
-    done < <(tail -r "$OPLOG_FILE" 2>/dev/null)  # BSD-only: reverse lines (macOS target)
+  if [ ! -f "$OPLOG_FILE" ]; then
+    echo "[]"
+    return 0
   fi
-  echo "]"
+  # One awk process replaces the old per-line awk/format_bytes subprocesses.
+  # A 1,300-row real log dropped from ~19 seconds to a fraction of a second.
+  tail -r "$OPLOG_FILE" 2>/dev/null | awk -F'\t' '
+    function esc(s) {
+      gsub(/\\/, "\\\\", s); gsub(/\"/, "\\\"", s)
+      gsub(/\r/, "\\r", s); gsub(/\n/, "\\n", s); gsub(/\t/, "\\t", s)
+      return s
+    }
+    function human(b) {
+      if (b >= 1099511627776) return sprintf("%.1f TB", b / 1099511627776)
+      if (b >= 1073741824) return sprintf("%.1f GB", b / 1073741824)
+      if (b >= 1048576) return sprintf("%.1f MB", b / 1048576)
+      if (b >= 1024) return sprintf("%.1f KB", b / 1024)
+      return sprintf("%d B", b)
+    }
+    BEGIN { printf "["; first = 1 }
+    NF == 7 { ts=$1; action=$3; bytes=$4; source=$5; category=$7 }
+    NF == 5 { ts=$1; action=$2; bytes=$3; source=$4; category=$5 }
+    NF != 5 && NF != 7 { next }
+    ts !~ /^[0-9]+$/ { next }
+    {
+      if (bytes !~ /^[0-9]+$/) bytes=0
+      if (!first) printf ","
+      first = 0
+      printf "{\"ts\":%s,\"action\":\"%s\",\"bytes\":%s,", ts, esc(action), bytes
+      printf "\"size_human\":\"%s\",\"path\":\"%s\",", human(bytes), esc(source)
+      printf "\"category\":\"%s\",\"recoverable\":%s}", esc(category), (action == "trash" ? "true" : "false")
+    }
+    END { print "]" }
+  '
 }
 
 # Human-readable operation history, newest first.
@@ -2425,6 +2596,43 @@ get_app_bundle_id() {
   esac
 }
 
+is_valid_bundle_id() {
+  local bid="${1:-}"
+  case "$bid" in
+    ""|*/*|*..*|*" "*|*$'\n'*|*$'\t'*) return 1 ;;
+  esac
+  [[ "$bid" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{1,254}$ ]]
+}
+
+# Defense in depth for the explicit path accepted by the JSON uninstaller.
+# The web server also resolves this target from a fresh discovery snapshot.
+is_valid_app_bundle_path() {
+  local app_path="${1:-}"
+  [ -n "$app_path" ] || return 1
+  [ ! -L "$app_path" ] || return 1
+  case "$app_path" in
+    *$'\n'*|*$'\r'*|*$'\t'*|*'/../'*|*'/./'*|*'//'*) return 1 ;;
+  esac
+  case "$app_path" in
+    /Applications/*.app|"$HOME"/Applications/*.app) return 0 ;;
+  esac
+  return 1
+}
+
+is_protected_app_bundle_id() {
+  case "${1:-}" in
+    com.apple.finder|com.apple.Safari|com.apple.mail|com.apple.Terminal|\
+    com.apple.systempreferences|com.apple.ActivityMonitor|com.apple.Console|\
+    com.apple.DiskUtility|com.apple.dt.Xcode|com.apple.AppStore|com.apple.iCal|\
+    com.apple.AddressBook|com.apple.Preview|com.apple.TextEdit|\
+    com.apple.calculator|com.apple.Dictionary|com.apple.Maps|com.apple.Notes|\
+    com.apple.reminders|com.apple.Stickies|com.apple.VoiceMemos|\
+    com.apple.stocks|com.apple.weather|com.apple.Passwords|com.apple.FaceTime|\
+    com.apple.MobileSMS|com.apple.Photos|com.apple.Music) return 0 ;;
+  esac
+  return 1
+}
+
 # Emit the canonical leftover-path candidates for an app, NUL-separated.
 # Shared by scan + clean so the two can never drift. Bundle-id-derived paths
 # are emitted ONLY when a valid bundle id is known, so an empty id can never
@@ -2437,9 +2645,17 @@ app_leftover_paths() {
   printf '%s\0' "$HOME/Library/Caches/$app_name"
   printf '%s\0' "$HOME/Library/Logs/$app_name"
   if [ -n "$bundle_id" ]; then
+    printf '%s\0' "$HOME/Library/Application Support/$bundle_id"
     printf '%s\0' "$HOME/Library/Caches/$bundle_id"
+    printf '%s\0' "$HOME/Library/Logs/$bundle_id"
     printf '%s\0' "$HOME/Library/Containers/$bundle_id"
+    printf '%s\0' "$HOME/Library/Group Containers/$bundle_id"
+    printf '%s\0' "$HOME/Library/Group Containers/group.$bundle_id"
+    printf '%s\0' "$HOME/Library/Application Scripts/$bundle_id"
     printf '%s\0' "$HOME/Library/HTTPStorages/$bundle_id"
+    printf '%s\0' "$HOME/Library/WebKit/$bundle_id"
+    printf '%s\0' "$HOME/Library/Cookies/${bundle_id}.binarycookies"
+    printf '%s\0' "$HOME/Library/LaunchAgents/${bundle_id}.plist"
     printf '%s\0' "$HOME/Library/Preferences/${bundle_id}.plist"
     printf '%s\0' "$HOME/Library/Saved Application State/${bundle_id}.savedState"
   fi
@@ -2468,9 +2684,8 @@ get_app_display_name() {
 scan_app_uninstaller_subitems_json() {
   local first=true
   local app app_name bundle_id leftover_total s sz_h esc_name esc_bundle esc_id disp_name
-  local scan_dirs=("/Applications")
-  [ -d "$HOME/Applications" ] && scan_dirs+=("$HOME/Applications")
   while IFS= read -r -d '' app; do
+    [ -L "$app" ] && continue
     app_name=$(basename "$app" .app)
     bundle_id=$(get_app_bundle_id "$app")
     leftover_total=0
@@ -2491,7 +2706,7 @@ scan_app_uninstaller_subitems_json() {
       echo ","
     fi
     echo -n "        {\"id\": \"$esc_id\", \"name\": \"$esc_name\", \"bundle_id\": \"$esc_bundle\", \"size_bytes\": $leftover_total, \"size_human\": \"$sz_h\", \"is_orphaned\": false}"
-  done < <(find "${scan_dirs[@]}" -maxdepth 1 -name "*.app" -print0 2>/dev/null | sort -z)
+  done < <(find /Applications "$HOME/Applications" -maxdepth 3 -name "*.app" -prune -print0 2>/dev/null | sort -z)
 }
 
 scan_mail_downloads_subitems_json() {
@@ -3022,6 +3237,8 @@ do_clean_json() {
   TOTAL_FREED=0
   TOTAL_ITEMS=0
   CLEAN_RESULTS=()
+  CLEAN_ERRORS=()
+  CLEAN_WARNINGS=()
 
   # Pre-clean free space measurement (KB, available on /). df can transiently
   # fail under heavy disk load (e.g. right after a large scan); under
@@ -3045,12 +3262,25 @@ do_clean_json() {
     if [ "$real_idx" -ge 0 ] && [ "$real_idx" -lt "${#fn_map[@]}" ]; then
       local fn="${fn_map[$real_idx]}"
       if [ -n "$fn" ]; then
+        if [ "${CAT_NEEDS_SUDO[$real_idx]}" -eq 1 ] && ! $SUDO_AVAILABLE; then
+          CLEAN_RESULTS+=("${CAT_IDS[$real_idx]}|0|0 B|skipped")
+          continue
+        fi
         local before_freed=$TOTAL_FREED
+        local before_errors; before_errors=$(clean_error_count)
+        local before_warnings; before_warnings=$(clean_warning_count)
+        _CURRENT_CATEGORY="${CAT_IDS[$real_idx]}"
         "$fn" >/dev/null 2>&1 || true
+        _CURRENT_CATEGORY=""
         local after_freed=$TOTAL_FREED
         local cat_freed=$((after_freed - before_freed))
         local cat_freed_h; cat_freed_h=$(format_bytes "$cat_freed")
-        CLEAN_RESULTS+=("${CAT_IDS[$real_idx]}|$cat_freed|$cat_freed_h|ok")
+        local cat_status="ok"
+        [ "$(clean_error_count)" -gt "$before_errors" ] && cat_status="error"
+        if [ "$cat_status" = "ok" ] && [ "$(clean_warning_count)" -gt "$before_warnings" ]; then
+          cat_status="partial"
+        fi
+        CLEAN_RESULTS+=("${CAT_IDS[$real_idx]}|$cat_freed|$cat_freed_h|$cat_status")
       else
         CLEAN_RESULTS+=("${CAT_IDS[$real_idx]}|0|0 B|skipped")
       fi
@@ -3076,8 +3306,10 @@ do_clean_json() {
   # JSON output
   local dry_run_json="false"
   [ "$DRYRUN" = "1" ] && dry_run_json="true"
+  local success_json="true"
+  [ "$(clean_error_count)" -gt 0 ] && success_json="false"
   echo '{'
-  echo '  "success": true,'
+  echo "  \"success\": $success_json,"
   echo "  \"dry_run\": $dry_run_json,"
   echo "  \"freed_bytes\": $real_freed,"
   echo "  \"freed_human\": \"$freed_h\","
@@ -3098,7 +3330,32 @@ do_clean_json() {
   done
 
   echo '  ],'
-  echo '  "errors": []'
+  echo '  "warnings": ['
+  local warning_index=0 warning_entry warning_category warning_message
+  local total_warnings; total_warnings=$(clean_warning_count)
+  for warning_entry in ${CLEAN_WARNINGS[@]+"${CLEAN_WARNINGS[@]}"}; do
+    IFS='|' read -r warning_category warning_message <<< "$warning_entry"
+    local warning_comma=","
+    [ $((warning_index + 1)) -eq "$total_warnings" ] && warning_comma=""
+    printf '    {"category":"%s","message":"%s"}%s\n' \
+      "$(json_escape_str "$warning_category")" \
+      "$(json_escape_str "$warning_message")" "$warning_comma"
+    warning_index=$((warning_index + 1))
+  done
+  echo '  ],'
+  echo '  "errors": ['
+  local error_index=0 error_entry error_category error_message
+  local total_errors; total_errors=$(clean_error_count)
+  for error_entry in ${CLEAN_ERRORS[@]+"${CLEAN_ERRORS[@]}"}; do
+    IFS='|' read -r error_category error_message <<< "$error_entry"
+    local error_comma=","
+    [ $((error_index + 1)) -eq "$total_errors" ] && error_comma=""
+    printf '    {"category":"%s","message":"%s"}%s\n' \
+      "$(json_escape_str "$error_category")" \
+      "$(json_escape_str "$error_message")" "$error_comma"
+    error_index=$((error_index + 1))
+  done
+  echo '  ]'
   echo '}'
 }
 
@@ -3183,6 +3440,16 @@ main() {
         [ $i -ge ${#args[@]} ] && { echo "Missing value for --app-uninstaller-sub"; exit 1; }
         APP_UNINSTALLER_CLEAN="${args[$i]}"
         ;;
+      --app-uninstaller-path)
+        i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --app-uninstaller-path"; exit 1; }
+        APP_UNINSTALLER_PATH="${args[$i]}"
+        ;;
+      --app-uninstaller-bundle-id)
+        i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --app-uninstaller-bundle-id"; exit 1; }
+        APP_UNINSTALLER_BUNDLE_ID="${args[$i]}"
+        ;;
       --project-artifact-sub)
         i=$((i + 1))
         [ $i -ge ${#args[@]} ] && { echo "Missing value for --project-artifact-sub"; exit 1; }
@@ -3245,6 +3512,8 @@ main() {
         echo "  --developer-sub 'd,b'    Developer sub-items (derived_data, broken_links...)"
         echo "  --ios-backups-sub 'u1,u2' iOS backup UUIDs to delete"
         echo "  --app-uninstaller-sub 'a' Apps to uninstall"
+        echo "  --app-uninstaller-path <p> Verified .app path to uninstall"
+        echo "  --app-uninstaller-bundle-id <id> Bundle id captured before removal"
         echo "  --project-artifact-sub 'p1,p2' Project artifact paths to delete"
         echo "  --status-json            System status as JSON"
         echo "  --thin-snapshots-json    Thin local TM snapshots, return JSON"
@@ -3255,7 +3524,7 @@ main() {
         echo "  --purge-ram              Purge RAM cache"
         echo "  --launchagents-clean     Clean invalid LaunchAgents"
         echo "  --spotlight-reindex      Rebuild Spotlight index"
-        echo "  --lang en|tr             Set UI language (default: tr)"
+        echo "  --lang en|tr             Set UI language (default: en)"
         echo ""
         echo "Env vars:"
         echo "  APPLE_CLEANUP_LANG       UI language (tr|en)"

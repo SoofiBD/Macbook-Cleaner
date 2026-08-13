@@ -22,6 +22,23 @@ def _log_path(home: Path) -> Path:
     return home / ".cache" / "apple-cleanup" / "operations.log"
 
 
+def _write_log(home: Path, lines) -> Path:
+    log = _log_path(home)
+    log.parent.mkdir(parents=True, exist_ok=True)
+    log.write_text("\n".join(lines) + "\n")
+    return log
+
+
+def _run_json(home: Path, *args):
+    env = dict(os.environ, HOME=str(home), APPLE_CLEANUP_LANG="en")
+    out = subprocess.run(
+        ["bash", str(SCRIPT), *args], env=env,
+        capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    return json.loads(out.stdout)
+
+
 def test_record_appends_one_line(tmp_path):
     _run_record(tmp_path, "trash", "2048", "/tmp/foo cache", "/tmp/.Trash/foo cache", "user_cache")
     lines = _log_path(tmp_path).read_text().splitlines()
@@ -50,13 +67,13 @@ def test_opt_out_writes_nothing(tmp_path):
 
 
 def test_real_trash_op_records_one_line(tmp_path):
-    # Isolated HOME so the manual-mv trash fallback lands in tmp_path/.Trash.
     (tmp_path / ".Trash").mkdir()
     victim = tmp_path / "Library" / "Caches" / "com.example.app"
     victim.mkdir(parents=True)
     (victim / "blob.bin").write_bytes(b"x" * 4096)
     env = dict(os.environ, HOME=str(tmp_path))
     cmd = (f'source "{SCRIPT}" >/dev/null 2>&1; '
+           f'_CURRENT_CATEGORY=test; '
            f'safe_rm "{victim}" "Example" >/dev/null 2>&1; true')
     out = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
@@ -64,7 +81,12 @@ def test_real_trash_op_records_one_line(tmp_path):
     assert len(lines) == 1
     cols = lines[0].split("\t")
     assert len(cols) == 7, cols
-    assert cols[2] in ("trash", "delete")
+    _, session, action, _, source, dest, category = cols
+    assert session
+    assert action == "trash"
+    assert source == str(victim)
+    assert dest.startswith(str(tmp_path / ".Trash"))
+    assert category == "test"
 
 
 def test_dry_run_records_nothing(tmp_path):
@@ -280,5 +302,95 @@ def test_history_human_lists_records_newest_first(tmp_path):
                          env=env, capture_output=True, text=True, timeout=30)
     assert out.returncode == 0, out.stderr
     assert "/tmp/newer" in out.stdout and "/tmp/older" in out.stdout
-    # Newest first: /tmp/newer appears before /tmp/older.
     assert out.stdout.index("/tmp/newer") < out.stdout.index("/tmp/older")
+
+
+def test_ops_json_marks_only_existing_trash_items_recoverable(tmp_path):
+    trash = tmp_path / ".Trash"
+    trash.mkdir()
+    dest = trash / "junk.txt"
+    dest.write_text("x")
+    _write_log(tmp_path, [
+        f"1000\tsessA\ttrash\t10\t{tmp_path}/junk.txt\t{dest}\ttest",
+        f"1001\tsessA\tdelete\t20\t{tmp_path}/gone\t\ttest",
+        "999\tdelete\t5\t/some/path\tlegacy",
+    ])
+
+    data = _run_json(tmp_path, "--ops-json")
+    sessions = {row["session_id"]: row for row in data["sessions"]}
+    items = sessions["sessA"]["items"]
+    trashed = next(item for item in items if item["action"] == "trash")
+    deleted = next(item for item in items if item["action"] == "delete")
+
+    assert data["success"] is True
+    assert trashed["recoverable"] is True
+    assert deleted["recoverable"] is False
+    assert sessions["sessA"]["recoverable_count"] == 1
+
+
+def test_ops_json_skips_malformed_lines(tmp_path):
+    trash = tmp_path / ".Trash"
+    trash.mkdir()
+    dest = trash / "ok.txt"
+    dest.write_text("x")
+    _write_log(tmp_path, [
+        f"2000\tsessB\ttrash\t10\t{tmp_path}/sixcol\t{dest}",
+        "garbage-no-tabs",
+        f"2001\tsessB\ttrash\t30\t{tmp_path}/ok.txt\t{dest}\ttest",
+    ])
+
+    data = _run_json(tmp_path, "--ops-json")
+    sessions = {row["session_id"]: row for row in data["sessions"]}
+    items = sessions["sessB"]["items"]
+
+    assert len(items) == 1
+    assert items[0]["source"].endswith("ok.txt")
+    assert sum(row["item_count"] for row in data["sessions"]) == 1
+
+
+def test_restore_moves_file_back(tmp_path):
+    trash = tmp_path / ".Trash"
+    trash.mkdir()
+    dest = trash / "junk.txt"
+    dest.write_text("x")
+    source = tmp_path / "junk.txt"
+    _write_log(tmp_path, [
+        f"1000\tsessA\ttrash\t1\t{source}\t{dest}\ttest",
+    ])
+
+    result = _run_json(tmp_path, "--restore-items", "1")
+
+    assert result["success"] is True
+    assert any(row["source"] == str(source) for row in result["restored"])
+    assert source.exists() and not dest.exists()
+
+
+def test_restore_renames_on_collision(tmp_path):
+    trash = tmp_path / ".Trash"
+    trash.mkdir()
+    dest = trash / "junk.txt"
+    dest.write_text("new")
+    source = tmp_path / "junk.txt"
+    source.write_text("existing")
+    _write_log(tmp_path, [
+        f"1000\tsessA\ttrash\t1\t{source}\t{dest}\ttest",
+    ])
+
+    result = _run_json(tmp_path, "--restore-items", "1")
+
+    assert (tmp_path / "junk.txt (restored)").exists()
+    assert any(row["reason"] == "renamed" for row in result["restored"])
+
+
+def test_restore_refuses_protected_destination(tmp_path):
+    trash = tmp_path / ".Trash"
+    trash.mkdir()
+    dest = trash / "x"
+    dest.write_text("x")
+    _write_log(tmp_path, [
+        f"1000\tsessA\ttrash\t1\t/etc/hosts\t{dest}\ttest",
+    ])
+
+    result = _run_json(tmp_path, "--restore-items", "1")
+
+    assert any(row["reason"] == "protected" for row in result["skipped"])
