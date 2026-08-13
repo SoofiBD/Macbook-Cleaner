@@ -18,21 +18,13 @@ Clean Mac safely removes unnecessary data on macOS such as caches, logs, tempora
 
 ## 🍺 Homebrew
 
-The Formula is ready for the `SoofiBD/apple-cleanup` tap. After that tap is
-published, install and run Apple Cleanup with:
+Install the Formula from this repository, then run either interface:
 
 ```bash
-brew install SoofiBD/apple-cleanup/apple-cleanup
+brew tap SoofiBD/apple-cleanup https://github.com/SoofiBD/Macbook-Cleaner
+brew install apple-cleanup
 apple-cleanup          # web dashboard
 apple-cleanup-cli      # terminal interface
-```
-
-Until the tap repository is published, maintainers can test a committed local
-clone as a tap (run these commands from the repository root):
-
-```bash
-brew tap SoofiBD/apple-cleanup "file://$(pwd)"
-brew install SoofiBD/apple-cleanup/apple-cleanup
 ```
 
 Homebrew removes the ZIP, permission-fixing, and project-directory steps. It
