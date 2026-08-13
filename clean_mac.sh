@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC2088,SC2254
+# Literal tildes are display labels; exclusion case patterns are user globs.
 # clean_mac.sh — macOS System Cleaner (Enterprise-Safe Edition)
 # Usage: bash clean_mac.sh
 #   --scan-json             Return scan results as JSON (web API)
@@ -776,25 +778,25 @@ safe_rm() {
   if _should_force_rm "$_CURRENT_NEEDS_SUDO" "$_CURRENT_IS_TRASH_EMPTY"; then
     # Direct rm -rf (sudo paths, trash emptying, or CI mode)
     if $SUDO_AVAILABLE && [ "$_CURRENT_NEEDS_SUDO" -eq 1 ]; then
-      sudo rm -rf "$path" 2>/dev/null && {
+      if sudo rm -rf "$path" 2>/dev/null; then
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
         oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
-      } || {
+      else
         err "$label $(L delete_failed)"
         record_clean_error "$label $(L delete_failed)"
-      }
+      fi
     else
-      rm -rf "$path" 2>/dev/null && {
+      if rm -rf "$path" 2>/dev/null; then
         success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
         oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
-      } || {
+      else
         err "$label $(L delete_failed)"
         record_clean_error "$label $(L delete_failed)"
-      }
+      fi
     fi
   else
     # Trash-first (user files, non-sudo)
@@ -1198,7 +1200,7 @@ scan_app_uninstaller() {
     done < <(app_leftover_paths "$app_name" "$bundle_id")
   done < <(find /Applications "$HOME/Applications" -maxdepth 3 -name "*.app" -prune -print0 2>/dev/null)
   local i; i=$(cat_index_by_id app_uninstaller)
-  CAT_SIZES[$i]=$total
+  CAT_SIZES[i]=$total
 }
 
 scan_mail_downloads() {
@@ -1211,7 +1213,7 @@ scan_mail_downloads() {
 
 scan_diagnostic_reports() {
   local i; i=$(cat_index_by_id diagnostic_reports)
-  CAT_SIZES[$i]=$(get_dir_size_bytes "$HOME/Library/Logs/DiagnosticReports")
+  CAT_SIZES[i]=$(get_dir_size_bytes "$HOME/Library/Logs/DiagnosticReports")
 }
 
 scan_quicklook_cache() {
@@ -1223,12 +1225,12 @@ scan_quicklook_cache() {
   # before cleanup even starts.
   qldir=""
   qldir="$(getconf DARWIN_USER_CACHE_DIR 2>/dev/null || true)com.apple.quicklook.ThumbnailsAgent/com.apple.QuickLook.thumbnailcache"
-  CAT_SIZES[$i]=$(get_dir_size_bytes "$qldir")
+  CAT_SIZES[i]=$(get_dir_size_bytes "$qldir")
 }
 
 scan_saved_app_state() {
   local i; i=$(cat_index_by_id saved_app_state)
-  CAT_SIZES[$i]=$(get_dir_size_bytes "$HOME/Library/Saved Application State")
+  CAT_SIZES[i]=$(get_dir_size_bytes "$HOME/Library/Saved Application State")
 }
 
 scan_other_trash() {
@@ -1239,7 +1241,7 @@ scan_other_trash() {
     s=$(get_dir_size_bytes "$d") || s=0
     total=$((total + s))
   done
-  CAT_SIZES[$i]=$total
+  CAT_SIZES[i]=$total
 }
 
 scan_all() {
@@ -1275,7 +1277,7 @@ print_scan_table() {
       printf "  ${DIM}%-3s  %-26s  %-12s  %b${NC}\n" \
         "$((i+1))" "$display_name" "—" "$sudo_tag"
     fi
-    [ "${CAT_IN_TOTAL[$i]}" -eq 1 ] && total_bytes=$((total_bytes + CAT_SIZES[$i]))
+    [ "${CAT_IN_TOTAL[$i]}" -eq 1 ] && total_bytes=$((total_bytes + CAT_SIZES[i]))
   done
   separator
   local total_h; total_h=$(format_bytes "$total_bytes")
@@ -1307,11 +1309,13 @@ clean_system_cache() {
     local sz_b; sz_b=$(sudo du -sk "$item" 2>/dev/null | awk '{print $1*1024}') || continue
     [ "$sz_b" -le 0 ] 2>/dev/null && continue
     local sz_h; sz_h=$(format_bytes "$sz_b")
-    sudo rm -rf "$item" 2>/dev/null && {
+    if sudo rm -rf "$item" 2>/dev/null; then
       success "$(basename "$item"): ${BOLD}${sz_h}${NC} $(L deleted)"
       TOTAL_FREED=$((TOTAL_FREED + sz_b))
       TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-    } || err "$(basename "$item") $(L delete_failed)"
+    else
+      err "$(basename "$item") $(L delete_failed)"
+    fi
   done < <(sudo find /Library/Caches -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
 }
 
@@ -1327,11 +1331,13 @@ clean_logs() {
       local sz_b; sz_b=$(sudo du -sk "$item" 2>/dev/null | awk '{print $1*1024}') || continue
       [ "$sz_b" -le 0 ] 2>/dev/null && continue
       local sz_h; sz_h=$(format_bytes "$sz_b")
-      sudo rm -rf "$item" 2>/dev/null && {
+      if sudo rm -rf "$item" 2>/dev/null; then
         success "$(basename "$item"): ${BOLD}${sz_h}${NC} $(L deleted)"
         TOTAL_FREED=$((TOTAL_FREED + sz_b))
         TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-      } || err "$(basename "$item") $(L delete_failed)"
+      else
+        err "$(basename "$item") $(L delete_failed)"
+      fi
     done < <(sudo find /Library/Logs -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
     _CURRENT_NEEDS_SUDO=0
   fi
@@ -1664,9 +1670,11 @@ clean_quicklook_cache() {
   _CURRENT_NEEDS_SUDO=0; _CURRENT_IS_TRASH_EMPTY=0
   header "$(L hdr_quicklook)"
   if command -v qlmanage &>/dev/null; then
-    qlmanage -r cache >/dev/null 2>&1 \
-      && success "$(L ql_reset)" \
-      || warn "$(L ql_failed)"
+    if qlmanage -r cache >/dev/null 2>&1; then
+      success "$(L ql_reset)"
+    else
+      warn "$(L ql_failed)"
+    fi
   else
     warn "$(L ql_missing)"
   fi
@@ -1898,9 +1906,11 @@ clean_developer() {
           ;;
         simctl_unavailable)
           if command -v xcrun &>/dev/null; then
-            xcrun simctl delete unavailable >/dev/null 2>&1 \
-              && success "$(L simctl_deleted)" \
-              || warn "$(L simctl_failed)"
+            if xcrun simctl delete unavailable >/dev/null 2>&1; then
+              success "$(L simctl_deleted)"
+            else
+              warn "$(L simctl_failed)"
+            fi
           fi
           ;;
         xcode_products)
@@ -1918,9 +1928,11 @@ clean_developer() {
           # (installed apps, settings) while keeping the devices registered.
           if command -v xcrun &>/dev/null; then
             xcrun simctl shutdown all >/dev/null 2>&1
-            xcrun simctl erase all >/dev/null 2>&1 \
-              && success "$(L simctl_erased)" \
-              || warn "$(L simctl_failed)"
+            if xcrun simctl erase all >/dev/null 2>&1; then
+              success "$(L simctl_erased)"
+            else
+              warn "$(L simctl_failed)"
+            fi
           fi
           ;;
         font_caches)
@@ -1933,9 +1945,11 @@ clean_developer() {
           ;;
         brew_cleanup)
           if command -v brew &>/dev/null; then
-            brew cleanup -s >/dev/null 2>&1 \
-              && success "$(L brew_cleanup_success)" \
-              || warn "$(L brew_cleanup_failed)"
+            if brew cleanup -s >/dev/null 2>&1; then
+              success "$(L brew_cleanup_success)"
+            else
+              warn "$(L brew_cleanup_failed)"
+            fi
           fi
           ;;
         swift_pm_cache)
@@ -2827,7 +2841,7 @@ scan_project_artifacts() {
   done < <(_get_project_artifacts)
   local i
   for i in "${!CAT_IDS[@]}"; do
-    [ "${CAT_IDS[$i]}" = "project_artifacts" ] && { CAT_SIZES[$i]=$total; break; }
+    [ "${CAT_IDS[$i]}" = "project_artifacts" ] && { CAT_SIZES[i]=$total; break; }
   done
 }
 
@@ -3143,7 +3157,7 @@ do_scan_json() {
   local total_bytes=0
   local i
   for i in "${!CAT_IDS[@]}"; do
-    [ "${CAT_IN_TOTAL[$i]}" -eq 1 ] && total_bytes=$((total_bytes + CAT_SIZES[$i]))
+    [ "${CAT_IN_TOTAL[$i]}" -eq 1 ] && total_bytes=$((total_bytes + CAT_SIZES[i]))
   done
 
   local total_h; total_h=$(format_bytes "$total_bytes")
@@ -3322,7 +3336,7 @@ do_clean_json() {
 
   local j=0
   for entry in "${CLEAN_RESULTS[@]}"; do
-    IFS='|' read -r cat_id freed freed_h status <<< "$entry"
+    IFS='|' read -r cat_id _ freed_h status <<< "$entry"
     local comma=","
     [ $((j + 1)) -eq ${#CLEAN_RESULTS[@]} ] && comma=""
     echo "    {\"category\": \"$cat_id\", \"freed\": \"$freed_h\", \"status\": \"$status\"}${comma}"
