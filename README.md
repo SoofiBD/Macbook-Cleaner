@@ -22,10 +22,15 @@ Install the Formula from this repository, then run either interface:
 
 ```bash
 brew tap SoofiBD/apple-cleanup https://github.com/SoofiBD/Macbook-Cleaner
+brew trust SoofiBD/apple-cleanup
 brew install apple-cleanup
 apple-cleanup          # web dashboard
 apple-cleanup-cli      # terminal interface
 ```
+
+The explicit `brew trust` step is required because this tap uses the existing
+`Macbook-Cleaner` repository instead of Homebrew's conventional
+`homebrew-apple-cleanup` repository name.
 
 Homebrew removes the ZIP, permission-fixing, and project-directory steps. It
 cannot grant macOS privacy permissions: for protected locations, give your
