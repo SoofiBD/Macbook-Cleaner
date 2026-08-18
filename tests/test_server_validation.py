@@ -147,10 +147,34 @@ class TestCategoryValidation(unittest.TestCase):
 
     def test_rejects_out_of_range_duplicate_and_boolean_ids(self):
         self.assertIsNone(self.v([0]))
-        self.assertIsNone(self.v([18]))
+        self.assertEqual(self.v([18]), ["installer_artifacts"])
+        self.assertIsNone(self.v([19]))
         self.assertIsNone(self.v([1, 1]))
         self.assertIsNone(self.v([True]))
         self.assertIsNone(self.v(["1;rm"]))
+
+
+class TestInstallerArtifactValidation(unittest.TestCase):
+    def test_requires_direct_download_child_and_identity(self):
+        from server import _validate_installer_artifact_selection
+
+        with patch.dict(os.environ, {"HOME": "/Users/tester"}):
+            self.assertTrue(_validate_installer_artifact_selection({
+                "path": "/Users/tester/Downloads/Tool.dmg",
+                "identity": "1:2:100:1234",
+            }))
+            self.assertFalse(_validate_installer_artifact_selection({
+                "path": "/Users/tester/Documents/Tool.dmg",
+                "identity": "1:2:100:1234",
+            }))
+            self.assertFalse(_validate_installer_artifact_selection({
+                "path": "/Users/tester/Downloads/Tool.txt",
+                "identity": "1:2:100:1234",
+            }))
+            self.assertFalse(_validate_installer_artifact_selection({
+                "path": "/Users/tester/Downloads/Tool.pkg",
+                "identity": "not-an-identity",
+            }))
 
 
 class TestExclusiveOperation(unittest.TestCase):
@@ -556,6 +580,149 @@ class TestRunScriptResilience(unittest.TestCase):
         self.assertTrue(data["success"])
         self.assertEqual(
             run.call_args.kwargs["env"]["APPLE_CLEANUP_LANG"], "en")
+
+
+class TestHealthReport(unittest.TestCase):
+    def test_reports_broad_state_permissions_and_redirected_trash(self):
+        import tempfile
+        from pathlib import Path
+        from server import _build_health_report
+
+        with tempfile.TemporaryDirectory() as root:
+            home = Path(root)
+            script = home / "clean_mac.sh"
+            script.write_text("#!/bin/bash\n")
+            state_dir = home / ".cache" / "apple-cleanup"
+            state_dir.mkdir(parents=True)
+            state_dir.chmod(0o755)
+            target = home / "redirected-trash"
+            target.mkdir()
+            (home / ".Trash").symlink_to(target, target_is_directory=True)
+
+            report = _build_health_report(
+                home=home,
+                script_path=script,
+                system_name="Darwin",
+                mac_version="15.0",
+                which=lambda name: f"/usr/bin/{name}",
+                disk_usage=lambda path: SimpleNamespace(
+                    total=1000, used=500, free=500),
+            )
+
+        checks = {check["id"]: check for check in report["checks"]}
+        self.assertEqual(checks["macos"]["status"], "ok")
+        self.assertEqual(checks["state"]["status"], "warning")
+        self.assertEqual(checks["trash"]["status"], "warning")
+        self.assertEqual(report["status"], "attention")
+
+    def test_low_disk_and_missing_lsof_are_explicit_warnings(self):
+        import tempfile
+        from pathlib import Path
+        from server import _build_health_report
+
+        with tempfile.TemporaryDirectory() as root:
+            home = Path(root)
+            script = home / "clean_mac.sh"
+            script.touch()
+            report = _build_health_report(
+                home=home,
+                script_path=script,
+                system_name="Darwin",
+                mac_version="14.0",
+                which=lambda name: None if name == "lsof" else f"/usr/bin/{name}",
+                disk_usage=lambda path: SimpleNamespace(
+                    total=1000, used=950, free=50),
+            )
+
+        checks = {check["id"]: check for check in report["checks"]}
+        self.assertEqual(checks["disk"]["status"], "warning")
+        self.assertEqual(checks["live_guard"]["status"], "warning")
+        self.assertIn("skipped", checks["live_guard"]["detail"])
+
+
+class TestBoundedScan(unittest.TestCase):
+    @staticmethod
+    def category(category_id, size=100, in_total=True):
+        return {
+            "success": True,
+            "id": category_id,
+            "category": {
+                "size_bytes": size,
+                "size_human": f"{size} B",
+                "needs_sudo": False,
+                "in_total": in_total,
+                "risk": "safe",
+                "recovery": "trash",
+            },
+        }
+
+    def test_preserves_successful_categories_when_one_worker_times_out(self):
+        from server import _run_bounded_scan
+
+        def run_category(category_id):
+            if category_id == "logs":
+                return None, "Script timed out"
+            return self.category(category_id), None
+
+        result = _run_bounded_scan(
+            run_category,
+            lambda: ({"disk_free": "10 GB", "user": "tester"}, None),
+            category_ids=("user_cache", "logs"),
+        )
+        self.assertTrue(result["success"])
+        self.assertTrue(result["partial"])
+        self.assertEqual(result["failed_categories"], {"logs": "timeout"})
+        self.assertEqual(result["total_bytes"], 100)
+        self.assertEqual(list(result["scan"]), ["user_cache"])
+
+    def test_rejects_malformed_worker_payload(self):
+        from server import _run_bounded_scan
+
+        result = _run_bounded_scan(
+            lambda category_id: ({
+                "success": True,
+                "id": category_id,
+                "category": {"size_bytes": "a lot"},
+            }, None),
+            lambda: ({}, None),
+            category_ids=("developer",),
+        )
+        self.assertFalse(result["success"])
+        self.assertEqual(
+            result["failed_categories"], {"developer": "unavailable"})
+
+    def test_marks_cancelled_worker_distinctly(self):
+        from server import _run_bounded_scan
+
+        result = _run_bounded_scan(
+            lambda category_id: (None, "Script cancelled"),
+            lambda: ({}, None),
+            category_ids=("developer",),
+        )
+        self.assertEqual(
+            result["failed_categories"], {"developer": "cancelled"})
+
+
+class TestProcessCancellation(unittest.TestCase):
+    def test_cancel_event_reaps_process_group_promptly(self):
+        import threading
+        import time
+        from server import ProcessCancelled, _run_process
+
+        cancel = threading.Event()
+        timer = threading.Timer(0.1, cancel.set)
+        started = time.monotonic()
+        timer.start()
+        try:
+            with self.assertRaises(ProcessCancelled):
+                _run_process(
+                    [sys.executable, "-c", "import time; time.sleep(30)"],
+                    timeout=10,
+                    cancel_event=cancel,
+                )
+        finally:
+            timer.cancel()
+        self.assertLess(time.monotonic() - started, 3)
 
 
 if __name__ == "__main__":

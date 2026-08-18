@@ -9,7 +9,7 @@ class AppleCleanup < Formula
   depends_on "python@3.14"
 
   def install
-    libexec.install "clean_mac.sh", "web"
+    libexec.install "clean_mac.sh", "lib", "web"
 
     server = libexec/"web/server.py"
     old_script_path = 'SCRIPT_PATH = (WEB_DIR.parent / "clean_mac.sh").resolve()'
@@ -69,6 +69,11 @@ class AppleCleanup < Formula
 
     assert_path_exists libexec/"web/index.html"
     assert_path_exists libexec/"web/vendor/gsap.min.js"
+    assert_path_exists libexec/"lib/core/path_policy.sh"
+    assert_path_exists libexec/"lib/core/executor.sh"
+    assert_path_exists libexec/"lib/categories/project_artifacts.sh"
+    assert_path_exists libexec/"lib/categories/app_uninstaller.sh"
+    assert_path_exists libexec/"lib/categories/installer_artifacts.sh"
 
     log = testpath/"server.log"
     pid = spawn(
@@ -96,6 +101,13 @@ class AppleCleanup < Formula
       socket.close
       assert_match "200 OK", response
       assert_match "<!DOCTYPE html>", response
+
+      socket = TCPSocket.new("127.0.0.1", port)
+      socket.write("GET /api/health HTTP/1.0\r\nHost: 127.0.0.1:#{port}\r\n\r\n")
+      health_response = socket.read
+      socket.close
+      assert_match "200 OK", health_response
+      assert_match '"checks"', health_response
     ensure
       Process.kill("TERM", pid)
       Process.wait(pid)

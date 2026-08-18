@@ -38,12 +38,18 @@ If you think a change genuinely needs a dependency, open an issue to discuss it
 | Path | Purpose |
 |------|---------|
 | `clean_mac.sh` | Main cleanup script (Bash) |
+| `lib/core/executor.sh` | Trash-first mutation and dry-run gateway |
+| `lib/core/path_policy.sh` | Shared path scope and live-file policy |
+| `lib/categories/` | Project, app-uninstaller, and installer-file domain modules |
 | `web/server.py` | Local Python dashboard server |
 | `web/index.html`, `style.css`, `script.js` | Dashboard UI (vanilla) |
 | `web/vendor/` | Locally vendored GSAP — no CDN |
 | `docs/` | Architecture and security design |
 | `SECURITY.md` | Supported deletion-safety contract |
 | `tests/` | Python `pytest` + Node `node:test` suites |
+
+Release maintainers must also follow `docs/RELEASING.md`; in particular, a
+Formula checksum is changed only after its immutable release tag exists.
 
 ## Getting Started
 

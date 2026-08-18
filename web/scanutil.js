@@ -11,7 +11,7 @@
   // for it, so a single selection would wipe the whole folder — see review.
   const FILELIST_CATEGORIES = [
     'app_leftovers', 'developer', 'browser_full',
-    'ios_backups', 'app_uninstaller', 'project_artifacts',
+    'ios_backups', 'app_uninstaller', 'project_artifacts', 'installer_artifacts',
   ];
 
   function computeTotalBytes(data) {
@@ -105,12 +105,13 @@
       ios_backups_selected: [],
       app_uninstaller_selected: [],
       project_artifacts_selected: [],
+      installer_artifacts_selected: [],
     };
     const categorySet = new Set();
     for (const r of selectedRows) {
       const bucket = r.catKey + '_selected';
       if (Array.isArray(payload[bucket])) {
-        if (r.catKey === 'project_artifacts') {
+        if (r.catKey === 'project_artifacts' || r.catKey === 'installer_artifacts') {
           if (r.identity) payload[bucket].push({ path: r.id, identity: r.identity });
         } else {
           payload[bucket].push(r.id);

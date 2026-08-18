@@ -16,6 +16,7 @@ import hmac
 import http.server
 import json
 import os
+import platform
 import plistlib
 import re
 import secrets
@@ -29,6 +30,7 @@ import threading
 import time
 import urllib.parse
 import webbrowser
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from pathlib import Path
 
@@ -67,6 +69,8 @@ MAX_BODY_SIZE = 1 * 1024 * 1024  # 1,048,576 bytes
 HISTORY_FILE = os.path.expanduser("~/.cache/apple-cleanup/usage_history.json")
 _history_lock = threading.Lock()
 _scan_lock = threading.Lock()
+_scan_cancel_event = threading.Event()
+_scan_running_event = threading.Event()
 _launch_agent_lock = threading.Lock()
 _operation_lock = threading.Lock()
 _scan_cache = {"at": 0.0, "data": None}
@@ -82,8 +86,24 @@ SNAPSHOT_INTERVAL = 3600           # seconds between recorded snapshots
 FORECAST_HORIZON_DAYS = 365        # don't report a forecast beyond a year
 
 
-def _run_process(cmd, *, timeout, cwd=None, env=None):
-    """Run argv in its own process group and reap the whole group on timeout."""
+class ProcessCancelled(Exception):
+    """Raised after a caller-requested process-group cancellation."""
+
+
+def _terminate_process_group(process):
+    try:
+        os.killpg(process.pid, signal.SIGTERM)
+        process.communicate(timeout=2)
+    except (ProcessLookupError, subprocess.TimeoutExpired):
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.communicate()
+
+
+def _run_process(cmd, *, timeout, cwd=None, env=None, cancel_event=None):
+    """Run argv in a process group; reap it on timeout or cancellation."""
     process = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -93,18 +113,21 @@ def _run_process(cmd, *, timeout, cwd=None, env=None):
         env=env,
         start_new_session=True,
     )
+    deadline = time.monotonic() + timeout
     try:
-        stdout, stderr = process.communicate(timeout=timeout)
-    except subprocess.TimeoutExpired:
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-            process.communicate(timeout=2)
-        except (ProcessLookupError, subprocess.TimeoutExpired):
+        while True:
+            if cancel_event is not None and cancel_event.is_set():
+                raise ProcessCancelled()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise subprocess.TimeoutExpired(cmd, timeout)
             try:
-                os.killpg(process.pid, signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            process.communicate()
+                stdout, stderr = process.communicate(timeout=min(0.25, remaining))
+                break
+            except subprocess.TimeoutExpired:
+                continue
+    except (subprocess.TimeoutExpired, ProcessCancelled):
+        _terminate_process_group(process)
         raise
     return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
 
@@ -457,12 +480,99 @@ _CATEGORY_IDS = (
     "developer", "trash", "browser_cache", "browser_full", "ios_backups",
     "app_uninstaller", "mail_downloads", "diagnostic_reports",
     "quicklook_cache", "saved_app_state", "other_trash", "project_artifacts",
+    "installer_artifacts",
 )
+
+SCAN_MAX_WORKERS = 4
+SCAN_CATEGORY_TIMEOUT = 90
+
+
+def _valid_scan_category(value):
+    """Validate the bounded worker protocol before exposing it to the UI."""
+    if not isinstance(value, dict):
+        return False
+    size = value.get("size_bytes")
+    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+        return False
+    if not isinstance(value.get("size_human"), str):
+        return False
+    if not isinstance(value.get("needs_sudo"), bool):
+        return False
+    if not isinstance(value.get("in_total"), bool):
+        return False
+    if value.get("risk") not in {"safe", "caution", "danger"}:
+        return False
+    if value.get("recovery") not in {"trash", "permanent", "mixed"}:
+        return False
+    return "subitems" not in value or isinstance(value["subitems"], list)
+
+
+def _run_bounded_scan(run_category, run_status, category_ids=_CATEGORY_IDS):
+    """Run isolated category scanners with bounded concurrency and failures.
+
+    A slow or broken category becomes an explicit partial result instead of
+    discarding every category that completed successfully.
+    """
+    completed = {}
+    failed = {}
+    started = time.monotonic()
+
+    with ThreadPoolExecutor(max_workers=SCAN_MAX_WORKERS,
+                            thread_name_prefix="apple-cleanup-scan") as pool:
+        futures = {
+            pool.submit(run_category, category_id): category_id
+            for category_id in category_ids
+        }
+        for future in as_completed(futures):
+            category_id = futures[future]
+            try:
+                data, error = future.result()
+            except Exception:
+                data, error = None, "worker failed"
+            category = data.get("category") if isinstance(data, dict) else None
+            if (error or not data or data.get("success") is not True
+                    or data.get("id") != category_id
+                    or not _valid_scan_category(category)):
+                if error and "cancelled" in error.lower():
+                    reason = "cancelled"
+                elif error and "timed out" in error.lower():
+                    reason = "timeout"
+                else:
+                    reason = "unavailable"
+                failed[category_id] = reason
+                continue
+            completed[category_id] = category
+
+    scan = {
+        category_id: completed[category_id]
+        for category_id in category_ids if category_id in completed
+    }
+    total_bytes = sum(
+        info["size_bytes"] for info in scan.values() if info["in_total"]
+    )
+    status, status_error = run_status()
+    if status_error or not isinstance(status, dict):
+        status = {}
+
+    return {
+        "success": bool(scan),
+        "plan_version": 1,
+        "scan": scan,
+        "total_bytes": total_bytes,
+        "total_human": _format_bytes(total_bytes),
+        "disk_free": status.get("disk_free", "unknown"),
+        "macos_version": status.get("macos_version", "unknown"),
+        "user": status.get("user", "unknown"),
+        "partial": bool(failed),
+        "completed_categories": list(scan),
+        "failed_categories": failed,
+        "duration_ms": round((time.monotonic() - started) * 1000),
+    }
 
 
 def _coerce_categories(value):
-    """Return unique stable category ids; accept legacy 1..17 inputs."""
-    if not isinstance(value, list) or not value or len(value) > 17:
+    """Return unique stable category ids; accept legacy numeric inputs."""
+    if not isinstance(value, list) or not value or len(value) > len(_CATEGORY_IDS):
         return None
     categories = []
     seen = set()
@@ -496,6 +606,29 @@ _PROJECT_ARTIFACT_NAMES = frozenset({
     "node_modules", "target", ".build", "build",
     "vendor", ".dart_tool", ".terraform",
 })
+_INSTALLER_IDENTITY_RE = re.compile(r"^[0-9]+:[0-9]+:[0-9]+:[0-9]+$")
+
+
+def _validate_installer_artifact(path):
+    if not isinstance(path, str) or not path.startswith("/"):
+        return False
+    if any(token in path for token in ("..", ",", "\n", "\r", "\t")):
+        return False
+    candidate = Path(path)
+    downloads = Path(os.path.expanduser("~/Downloads"))
+    return candidate.parent == downloads and candidate.suffix.lower() in {
+        ".dmg", ".pkg", ".iso",
+    }
+
+
+def _validate_installer_artifact_selection(value):
+    return (
+        isinstance(value, dict)
+        and set(value) == {"path", "identity"}
+        and _validate_installer_artifact(value.get("path"))
+        and isinstance(value.get("identity"), str)
+        and _INSTALLER_IDENTITY_RE.fullmatch(value["identity"]) is not None
+    )
 
 def _is_protected_bundle_id(bundle_id: str) -> bool:
     """Fail closed for Apple-owned bundle identifiers."""
@@ -567,6 +700,131 @@ def _format_bytes(value):
     if value >= 1024:
         return f"{value / 1024:.1f} KB"
     return f"{value} B"
+
+
+def _build_health_report(*, home=None, script_path=None, system_name=None,
+                         mac_version=None, which=None, disk_usage=None):
+    """Return a read-only, privacy-conscious runtime health report."""
+    home = Path(home or os.path.expanduser("~")).resolve()
+    script_path = Path(script_path or SCRIPT_PATH)
+    system_name = system_name or platform.system()
+    mac_version = mac_version if mac_version is not None else platform.mac_ver()[0]
+    which = which or shutil.which
+    disk_usage = disk_usage or shutil.disk_usage
+    checks = []
+
+    def add(check_id, title, status, detail, recommendation=""):
+        checks.append({
+            "id": check_id,
+            "title": title,
+            "status": status,
+            "detail": detail,
+            "recommendation": recommendation,
+        })
+
+    if system_name == "Darwin":
+        try:
+            major = int((mac_version or "0").split(".", 1)[0])
+        except ValueError:
+            major = 0
+        if major >= 13:
+            add("macos", "macOS compatibility", "ok",
+                f"macOS {mac_version} is within the tested support baseline.")
+        else:
+            add("macos", "macOS compatibility", "warning",
+                f"macOS {mac_version or 'unknown'} is below the tested baseline.",
+                "Use macOS 13 or newer, or verify every cleanup in Preview mode.")
+    else:
+        add("macos", "macOS compatibility", "warning",
+            f"Detected {system_name}; cleanup execution is supported only on macOS.")
+
+    if script_path.is_file():
+        add("script", "Cleanup engine", "ok", "The cleanup engine is installed.")
+    else:
+        add("script", "Cleanup engine", "warning", "The cleanup engine is missing.",
+            "Reinstall Apple Cleanup before attempting a cleanup.")
+
+    try:
+        usage = disk_usage(home)
+        free_pct = (usage.free / usage.total * 100) if usage.total else 0
+        status = "warning" if free_pct < 10 else "ok"
+        add("disk", "Free disk space", status,
+            f"{_format_bytes(usage.free)} free ({free_pct:.1f}%).",
+            "Free space soon; macOS may become unstable below 10%." if status == "warning" else "")
+    except OSError:
+        add("disk", "Free disk space", "warning", "Disk usage could not be read.")
+
+    state_dir = home / ".cache" / "apple-cleanup"
+    if not state_dir.exists():
+        add("state", "Private state directory", "info",
+            "No history or recovery metadata has been created yet.")
+    elif state_dir.is_symlink():
+        add("state", "Private state directory", "warning",
+            "The state directory is a symbolic link.",
+            "Move it aside and let Apple Cleanup create a private directory.")
+    else:
+        try:
+            state_stat = state_dir.stat()
+            private = state_stat.st_uid == os.getuid() and not (stat.S_IMODE(state_stat.st_mode) & 0o077)
+            add("state", "Private state directory", "ok" if private else "warning",
+                "Owner-only permissions are active." if private else "Ownership or permissions are too broad.",
+                "Set the directory owner to your account and permissions to 700." if not private else "")
+        except OSError:
+            add("state", "Private state directory", "warning",
+                "State-directory metadata could not be read.")
+
+    trash = home / ".Trash"
+    add("trash", "Trash destination", "warning" if trash.is_symlink() else "ok",
+        "Trash is a symbolic link and recovery moves will be refused." if trash.is_symlink()
+        else "Trash destination is not redirected.",
+        "Replace the Trash symlink with a normal user-owned directory." if trash.is_symlink() else "")
+
+    required_tools = ("bash", "find", "du", "stat", "osascript")
+    missing = [name for name in required_tools if not which(name)]
+    add("tools", "Required system tools", "warning" if missing else "ok",
+        f"Missing: {', '.join(missing)}." if missing else "All required system tools are available.",
+        "Restore the missing macOS command-line tools." if missing else "")
+
+    if which("lsof"):
+        add("live_guard", "Open-file safety guard", "ok",
+            "lsof is available for live database and file checks.")
+    else:
+        add("live_guard", "Open-file safety guard", "warning",
+            "lsof is unavailable; database-bearing targets will be skipped.",
+            "Install or restore lsof to enable complete live-file checks.")
+
+    agent = home / "Library" / "LaunchAgents" / f"{LAUNCH_AGENT_LABEL}.plist"
+    if not agent.exists():
+        add("schedule", "Weekly schedule", "info", "Weekly cleanup is disabled.")
+    elif agent.is_symlink():
+        add("schedule", "Weekly schedule", "warning",
+            "The LaunchAgent configuration is a symbolic link.",
+            "Disable and recreate the weekly schedule from the dashboard.")
+    else:
+        try:
+            with agent.open("rb") as handle:
+                payload = plistlib.load(handle)
+            args = payload.get("ProgramArguments", [])
+            valid = (payload.get("Label") == LAUNCH_AGENT_LABEL
+                     and isinstance(args, list) and "--clean-safe-json" in args)
+            add("schedule", "Weekly schedule", "ok" if valid else "warning",
+                "The weekly LaunchAgent matches the safe-clean contract." if valid
+                else "The LaunchAgent does not match the expected safe-clean contract.",
+                "Disable and recreate the weekly schedule from the dashboard." if not valid else "")
+        except (OSError, ValueError, plistlib.InvalidFileException):
+            add("schedule", "Weekly schedule", "warning",
+                "The LaunchAgent configuration could not be parsed.",
+                "Disable and recreate the weekly schedule from the dashboard.")
+
+    counts = {status: sum(c["status"] == status for c in checks)
+              for status in ("ok", "warning", "info")}
+    return {
+        "success": True,
+        "status": "attention" if counts["warning"] else "healthy",
+        "summary": counts,
+        "checks": checks,
+        "generated_at": int(time.time()),
+    }
 
 
 def _normalized_app_name(value):
@@ -887,7 +1145,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
 
         return payload, None
 
-    def _run_script(self, args, timeout=120, env_extra=None):
+    def _run_script(self, args, timeout=120, env_extra=None, cancel_event=None):
         """Run clean_mac.sh with given arguments and return parsed JSON.
 
         The script may exit non-zero while still emitting valid JSON on
@@ -913,6 +1171,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
                 timeout=timeout,
                 cwd=str(SCRIPT_PATH.parent),
                 env=run_env,
+                cancel_event=cancel_event,
             )
             output = result.stdout.strip()
             if not output:
@@ -938,6 +1197,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             return parsed, None
         except subprocess.TimeoutExpired:
             return None, "Script timed out"
+        except ProcessCancelled:
+            return None, "Script cancelled"
         except Exception as e:
             sys.stderr.write(f"[ERROR] _run_script: {e}\n")
             return None, "Internal script error"
@@ -954,6 +1215,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             self._handle_scan()
         elif path == "/api/status":
             self._handle_status()
+        elif path == "/api/health":
+            self._handle_health()
         elif path == "/api/apps":
             self._handle_apps()
         elif path == "/api/forecast":
@@ -975,6 +1238,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path == "/api/clean":
             self._handle_clean()
+        elif parsed.path == "/api/scan-cancel":
+            self._handle_scan_cancel()
         elif parsed.path == "/api/spotlight-reindex":
             self._handle_spotlight_reindex()
         elif parsed.path == "/api/flush-dns":
@@ -996,23 +1261,55 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
 
     # ── API Handlers ────────────────────────────────────────
     def _handle_scan(self):
-        # Scanning walks many large cache/log trees with `du`; on fuller or
-        # slower machines this easily exceeds the default 120s. Give it room
-        # so a legitimately slow scan doesn't surface as a server error.
+        # Each category runs in its own bounded process. A single slow cache or
+        # unavailable tool therefore produces a partial scan instead of losing
+        # every result, while the worker cap avoids saturating the disk.
         with _scan_lock:
             now = time.monotonic()
             if (_scan_cache["data"] is not None
                     and now - _scan_cache["at"] < SCAN_CACHE_SECONDS):
                 self._send_json(_scan_cache["data"])
                 return
-            data, err = self._run_script(["--scan-json"], timeout=600)
-            if not err:
+            _scan_cancel_event.clear()
+            _scan_running_event.set()
+            try:
+                def run_category(category_id):
+                    if _scan_cancel_event.is_set():
+                        return None, "Script cancelled"
+                    return self._run_script(
+                        ["--scan-category-json", category_id],
+                        timeout=SCAN_CATEGORY_TIMEOUT,
+                        cancel_event=_scan_cancel_event,
+                    )
+
+                data = _run_bounded_scan(
+                    run_category,
+                    lambda: self._run_script(["--status-json"], timeout=15),
+                )
+            finally:
+                _scan_running_event.clear()
+            if _scan_cancel_event.is_set():
+                data["cancelled"] = True
+                # Cancellation is a user-selected terminal state, not a server
+                # failure. Completed category results remain safe to inspect.
+                data["success"] = True
+                data["partial"] = True
+            if data["success"] and not data["partial"]:
                 _scan_cache["data"] = data
                 _scan_cache["at"] = time.monotonic()
-        if err:
-            self._send_error_json(f"Scan error: {err}")
-        else:
-            self._send_json(data)
+        if not data["success"]:
+            self._send_error_json("Scan failed: no category completed")
+            return
+        self._send_json(data)
+
+    def _handle_scan_cancel(self):
+        running = _scan_running_event.is_set()
+        if running:
+            _scan_cancel_event.set()
+        self._send_json({
+            "success": True,
+            "cancel_requested": running,
+        })
 
     def _handle_status(self):
         data, err = self._run_script(["--status-json"], timeout=15)
@@ -1020,6 +1317,9 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             self._send_error_json(f"Status error: {err}")
         else:
             self._send_json(data)
+
+    def _handle_health(self):
+        self._send_json(_build_health_report())
 
     def _handle_history(self):
         data, err = self._run_script(["--history-json"], timeout=15)
@@ -1132,14 +1432,39 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         # Project artifact sub-items. The shell revalidates the scan-time
         # device/inode tuple immediately before moving the target to Trash.
         project_artifacts_selected = payload.get("project_artifacts_selected", [])
-        if project_artifacts_selected and isinstance(project_artifacts_selected, list):
+        if project_artifacts_selected:
+            if not isinstance(project_artifacts_selected, list):
+                self._send_error_json("Invalid project artifact selection", 400)
+                return
             selected = [x for x in project_artifacts_selected
                         if _validate_project_artifact_selection(x)]
+            if len(selected) != len(project_artifacts_selected):
+                self._send_error_json("Invalid project artifact selection", 400)
+                return
             safe = [x["path"] for x in selected]
             identities = [x["identity"] for x in selected]
             if safe:
                 args += ["--project-artifact-sub", ",".join(safe)]
                 args += ["--project-artifact-identities", ",".join(identities)]
+
+        # Installer files are direct ~/Downloads children and require the
+        # scan-time device/inode/size/mtime tuple. The shell repeats both checks
+        # immediately before moving the explicitly selected file to Trash.
+        installer_artifacts_selected = payload.get("installer_artifacts_selected", [])
+        if installer_artifacts_selected:
+            if not isinstance(installer_artifacts_selected, list):
+                self._send_error_json("Invalid installer file selection", 400)
+                return
+            selected = [x for x in installer_artifacts_selected
+                        if _validate_installer_artifact_selection(x)]
+            if len(selected) != len(installer_artifacts_selected):
+                self._send_error_json("Invalid installer file selection", 400)
+                return
+            safe = [x["path"] for x in selected]
+            identities = [x["identity"] for x in selected]
+            if safe:
+                args += ["--installer-artifact-sub", ",".join(safe)]
+                args += ["--installer-artifact-identities", ",".join(identities)]
 
         data, err = self._run_script(args, env_extra=_extra_env_for_clean(payload))
         if err:

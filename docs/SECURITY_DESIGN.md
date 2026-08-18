@@ -15,6 +15,8 @@ validation is an additional gate, not a replacement for sink validation.
    parent directory and authorizing manifest.
 3. The shell validates absolute syntax, traversal, control characters,
    protected roots, logical scope and physical-parent scope.
+   `~/Downloads` remains protected except for direct `.dmg`, `.pkg`, and `.iso`
+   children selected individually from a fresh scan with a matching identity.
 4. Sensitive cache/profile paths are checked for a running owning bundle and
    open files. If `lsof` cannot verify a directory containing SQLite/WAL data,
    the target is skipped.
@@ -23,6 +25,11 @@ validation is an additional gate, not a replacement for sink validation.
    categories use the same path validator before `rm`.
 7. A private operation log records the source, known Trash destination,
    category and recovery status.
+
+Category scanning is failure-isolated: the server validates each worker record,
+caps concurrency at four, kills the complete worker process group on timeout or
+user cancellation, and marks missing records unavailable rather than treating
+unknown sizes as safe-to-clean results.
 
 ## Dry-run
 

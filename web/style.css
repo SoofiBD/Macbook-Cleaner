@@ -403,6 +403,8 @@ a { color: inherit; }
 .cat-risk { color: var(--text-3); font-size: 9px; font-weight: 680; text-align: right; text-transform: uppercase; }
 .cat-risk.risk-caution { color: var(--warning); }
 .cat-risk.risk-danger { color: var(--danger); }
+.cat.cat-unavailable { opacity: .58; }
+.cat.cat-unavailable .cat-row-main { cursor: not-allowed; }
 .cat-chev { width: 14px; height: 14px; color: var(--text-3); transition: transform var(--duration) var(--ease); }
 .cat[data-open="true"] .cat-chev { transform: rotate(180deg); }
 .tag { display: inline-flex; align-items: center; gap: 3px; margin-left: 5px; padding: 1px 5px; border-radius: 4px; color: var(--text-3); background: var(--surface-3); font-size: 8px; font-weight: 700; letter-spacing: .03em; vertical-align: 1px; text-transform: uppercase; }
@@ -418,6 +420,7 @@ a { color: inherit; }
 .switch input:checked + .switch-slider { border-color: var(--accent); background: var(--accent); }
 .switch input:checked + .switch-slider::after { background: #fff; transform: translateX(14px); }
 .switch input:focus-visible + .switch-slider { outline: 2px solid var(--accent); outline-offset: 3px; }
+.switch input:disabled + .switch-slider { opacity: .45; cursor: not-allowed; }
 
 .subitems { display: none; padding: 0 18px 8px 64px; background: var(--surface-2); border-top: 1px solid var(--hair); }
 .cat[data-open="true"] .subitems { display: block; }
@@ -463,7 +466,7 @@ a { color: inherit; }
 .search-box .ic { width: 15px; height: 15px; color: var(--text-3); }
 .search-box input { width: 100%; min-width: 0; padding: 0; border: 0; outline: 0; color: var(--text-1); background: transparent; font-size: 12px; }
 .search-box input::placeholder { color: var(--text-3); }
-.uninstaller-container, .files-list, .history-list { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-sm); }
+.uninstaller-container, .files-list, .history-list, .health-list { overflow: hidden; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--surface); box-shadow: var(--shadow-sm); }
 .apps-list, .files-list { padding: 0; margin: 0; list-style: none; }
 .app-item { display: flex; align-items: center; justify-content: space-between; gap: 20px; min-height: 68px; padding: 10px 14px; border-bottom: 1px solid var(--line); transition: background var(--duration-fast); }
 .app-item:last-child { border-bottom: 0; }
@@ -500,6 +503,17 @@ a { color: inherit; }
 .history-row { display: grid; grid-template-columns: 150px 100px 84px minmax(90px, .55fr) minmax(180px, 1.5fr); align-items: center; gap: 12px; min-height: 48px; padding: 7px 14px; border-bottom: 1px solid var(--line); font-size: 10px; }
 .history-row:last-child { border-bottom: 0; }
 .history-row:hover { background: var(--surface-hover); }
+.health-list { display: flex; flex-direction: column; }
+.health-list .muted { padding: 30px 18px; margin: 0; text-align: center; }
+.health-row { display: grid; grid-template-columns: 92px minmax(150px, .6fr) minmax(220px, 1.4fr); align-items: start; gap: 14px; padding: 13px 14px; border-bottom: 1px solid var(--line); font-size: 11px; }
+.health-row:last-child { border-bottom: 0; }
+.health-title { color: var(--text-1); font-weight: 650; }
+.health-detail { display: flex; flex-direction: column; gap: 4px; color: var(--text-2); }
+.health-recommendation { color: var(--text-3); font-size: 10px; }
+.health-badge { justify-self: start; padding: 3px 7px; border-radius: 999px; font-size: 9px; font-weight: 700; text-transform: uppercase; }
+.health-badge.health-ok { color: var(--success); background: var(--success-soft); }
+.health-badge.health-warning { color: var(--warning); background: var(--warning-soft); }
+.health-badge.health-info { color: var(--text-2); background: var(--surface-3); }
 .history-when, .history-cat { color: var(--text-3); }
 .history-size { font-variant-numeric: tabular-nums; font-weight: 650; }
 .history-path { overflow: hidden; color: var(--text-2); font-family: var(--font-mono); white-space: nowrap; text-overflow: ellipsis; }

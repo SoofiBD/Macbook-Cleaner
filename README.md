@@ -28,6 +28,14 @@ apple-cleanup          # web dashboard
 apple-cleanup-cli      # terminal interface
 ```
 
+Update through the same trusted tap:
+
+```bash
+brew update
+brew upgrade apple-cleanup
+apple-cleanup-cli --version
+```
+
 The explicit `brew trust` step is required because this tap uses the existing
 `Macbook-Cleaner` repository instead of Homebrew's conventional
 `homebrew-apple-cleanup` repository name.
@@ -78,14 +86,19 @@ The dashboard opens automatically in your browser at `http://localhost:8080`. �
 ## ✨ Features
 
 - 🔍 Scans first and asks for confirmation — no surprises
-- 📊 Flexible cleanup across **17 categories**
+- 📊 Flexible cleanup across **18 categories**
 - 🧑‍💻 Deep **developer cleanup** — 40+ caches: Xcode/simulators, Homebrew, npm/pnpm/yarn/bun/deno, pip/uv/poetry/conda, Go, Rust Cargo, Gradle/Maven/SBT/Bazel, CocoaPods/Carthage, Composer, Flutter, JetBrains, Playwright/Puppeteer/Prisma, HuggingFace, and more — each with a plain-language description of what it is and how it rebuilds, plus a per-project breakdown of Xcode DerivedData (e.g. *MyApp: 2.3 GB, ClientSDK: 1.1 GB*)
 - 🗑️ **App Uninstaller** — remove apps and their leftovers, with Homebrew-cask awareness, from the dashboard
 - 🧱 **Project Artifact Scanner** — finds stale `node_modules`/`target`/`.build`/`build`/`vendor`/`.dart_tool`/`.terraform` next to a project manifest in your code folders; stale (>30 days) ones are pre-selected
+- 📦 **Installer File Review** — lists large top-level DMG/PKG/ISO files in
+  `~/Downloads`; none are pre-selected and only identity-bound individual files can be moved to Trash
 - 📈 **Storage forecast** — records disk-usage history and predicts when your disk will fill (least-squares trend over the last 90 days)
+- 🩺 **Read-only Health view** — checks macOS compatibility, disk pressure,
+  private state permissions, Trash redirection, system tools and the weekly schedule without changing anything
+- ⏱️ Bounded, cancellable category scans preserve successful partial results
 - 🌐 Lightweight web dashboard (start with a single command), animated with **GSAP** (vendored locally — no CDN/network), with reduced-motion support and full graceful fallback if scripts fail to load
 - 🛡️ Avoids touching critical system files by default
-- 🍎 Compatible with Bash 3.2+ (works on all macOS releases)
+- 🍎 Compatible with Bash 3.2; macOS 13+ is the supported baseline (CI covers macOS 14 and 15)
 
 ---
 
@@ -150,6 +163,7 @@ The script targets a wide array of system and user items, categorized by safety 
 | 15| 💾 Saved App State | `~/Library/Saved Application State` | Caution |
 | 16| 💽 Other Trashes | `/Volumes/*/.Trashes` | permanent; opt-in |
 | 17| 🧱 Project Artifacts | Stale `node_modules`, `target`, `.build`, `build`, `vendor`, `.dart_tool`, `.terraform` in code folders | interactive selection |
+| 18| 📦 Installer Files | Large top-level `.dmg`, `.pkg`, `.iso` files in `~/Downloads` | never pre-selected; identity-bound Trash move |
 
 ---
 
@@ -162,6 +176,8 @@ apple-cleanup/
 ├── CLICK_TO_START.command    # Double-click launcher (fixes perms/quarantine)
 ├── Internal_Launcher.command # Background: runs the server
 ├── clean_mac.sh              # Main cleanup script
+├── lib/core/                 # Trash-first executor and fail-closed path policy
+├── lib/categories/           # Project, app-uninstaller and installer modules
 ├── SECURITY.md               # Public deletion-safety contract
 ├── THIRD_PARTY_NOTICES.md    # Vendored component notices
 ├── docs/                     # Architecture and security design
@@ -241,7 +257,8 @@ The dashboard exposes an API that can delete files, so it is locked down:
   race one another.
 - Uses stable category IDs, versioned scan plans, scan-time artifact identities,
   physical-parent validation and live database guards.
-- Terminates the complete subprocess group when a scan or cleanup times out.
+- Runs scans through four bounded category workers; timed-out categories become
+  explicit partial results and the dashboard can cancel active process groups.
 
 ---
 

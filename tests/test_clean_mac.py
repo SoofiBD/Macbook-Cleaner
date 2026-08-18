@@ -20,6 +20,15 @@ def run_scan(home: Path) -> dict:
     return json.loads(out.stdout)
 
 
+def run_category_scan(home: Path, category_id: str):
+    env = dict(os.environ, HOME=str(home))
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--scan-category-json", category_id],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    return result, json.loads(result.stdout)
+
+
 def make_dir_with_bytes(path: Path, kb: int) -> None:
     """path altında ~kb kilobayt veri oluştur."""
     path.mkdir(parents=True, exist_ok=True)
@@ -36,6 +45,23 @@ def test_scan_json_has_required_keys(tmp_path):
     for cat_id, info in data["scan"].items():
         assert "size_bytes" in info, cat_id
         assert info["recovery"] in {"trash", "permanent", "mixed"}, cat_id
+
+
+def test_single_category_scan_uses_stable_id_protocol(tmp_path):
+    make_dir_with_bytes(tmp_path / "Library/Caches/com.example.app", kb=8)
+    result, data = run_category_scan(tmp_path, "user_cache")
+    assert result.returncode == 0, result.stderr
+    assert data["success"] is True
+    assert data["plan_version"] == 1
+    assert data["id"] == "user_cache"
+    assert data["category"]["size_bytes"] >= 8 * 1024
+    assert data["category"]["risk"] == "safe"
+
+
+def test_single_category_scan_rejects_unknown_id(tmp_path):
+    result, data = run_category_scan(tmp_path, "../../etc")
+    assert result.returncode != 0
+    assert data == {"success": False, "error": "unknown category id: ../../etc"}
 
 
 def test_scan_json_includes_risk_per_category(tmp_path):
@@ -227,6 +253,18 @@ def test_removal_validator_allows_ordinary_home_leaf(tmp_path):
     victim.mkdir(parents=True)
     result = _validate_path(tmp_path, str(victim))
     assert result.returncode == 0, result.stderr
+
+
+def test_downloads_leaf_is_allowed_only_for_installer_category(tmp_path):
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    installer = downloads / "Tool.dmg"
+    installer.write_bytes(b"x")
+    blocked = _validate_path(tmp_path, str(installer), category="user_cache")
+    assert blocked.returncode != 0
+    allowed = _validate_path(
+        tmp_path, str(installer), category="installer_artifacts")
+    assert allowed.returncode == 0, allowed.stderr
 
 
 def test_removal_validator_rejects_symlinked_contents_root(tmp_path):
@@ -598,9 +636,57 @@ def test_category_registry_order_is_stable():
         "developer", "trash", "browser_cache", "browser_full", "ios_backups",
         "app_uninstaller", "mail_downloads", "diagnostic_reports",
         "quicklook_cache", "saved_app_state", "other_trash", "project_artifacts",
+        "installer_artifacts",
     ]
     ids = _source_eval('printf "%s\\n" "${CAT_IDS[@]}"').splitlines()
     assert ids == expected, ids
+
+
+def test_installer_artifacts_are_explicit_identity_bound_candidates(tmp_path):
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    installer = downloads / "Example.dmg"
+    installer.write_bytes(b"x" * (11 * 1024 * 1024))
+
+    result, data = run_category_scan(tmp_path, "installer_artifacts")
+    assert result.returncode == 0, result.stderr
+    category = data["category"]
+    assert category["in_total"] is False
+    assert category["risk"] == "caution"
+    assert len(category["subitems"]) == 1
+    item = category["subitems"][0]
+    assert item["id"] == str(installer)
+    assert item["is_orphaned"] is False
+    assert len(item["identity"].split(":")) == 4
+
+
+def test_installer_artifact_dry_run_requires_unchanged_identity(tmp_path):
+    downloads = tmp_path / "Downloads"
+    downloads.mkdir()
+    installer = downloads / "Example.pkg"
+    installer.write_bytes(b"x" * (11 * 1024 * 1024))
+    _, scan = run_category_scan(tmp_path, "installer_artifacts")
+    item = scan["category"]["subitems"][0]
+
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_DRYRUN="1")
+    ok = subprocess.run([
+        "bash", str(SCRIPT), "--installer-artifact-sub", item["id"],
+        "--installer-artifact-identities", item["identity"],
+        "--clean-ids-json", "installer_artifacts",
+    ], env=env, capture_output=True, text=True, timeout=60)
+    assert ok.returncode == 0, ok.stderr
+    assert json.loads(ok.stdout)["estimated_bytes"] >= 11 * 1024 * 1024
+    assert installer.exists(), "dry-run must not move the installer"
+
+    installer.write_bytes(b"changed")
+    changed = subprocess.run([
+        "bash", str(SCRIPT), "--installer-artifact-sub", item["id"],
+        "--installer-artifact-identities", item["identity"],
+        "--clean-ids-json", "installer_artifacts",
+    ], env=env, capture_output=True, text=True, timeout=60)
+    payload = json.loads(changed.stdout)
+    assert payload["success"] is False
+    assert "changed scan identity" in payload["errors"][0]["message"]
 
 
 def test_clean_ids_json_uses_stable_category_ids(tmp_path):

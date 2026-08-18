@@ -19,6 +19,8 @@
 #   --lang en|tr            Set UI language (default: en)
 set -euo pipefail
 
+SCRIPT_DIR=$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)
+
 # Force a dot decimal separator regardless of the user's regional locale.
 # `bc` always emits "6.3", but printf "%.1f" parses input using LC_NUMERIC — so
 # under a comma-decimal locale (e.g. tr_TR) it rejects "6.3" with
@@ -138,6 +140,8 @@ L() {
     en::cat_other_trash)      echo "Other Volumes Trash" ;;
     tr::cat_project_artifacts) echo "Proje Yapıları" ;;
     en::cat_project_artifacts) echo "Project Artifacts" ;;
+    tr::cat_installer_artifacts) echo "Kurulum Dosyaları" ;;
+    en::cat_installer_artifacts) echo "Installer Files" ;;
 
     # ── Cleaning Headers ─────────────────────────────────────
     tr::hdr_user_cache)       echo "🗑️  Kullanıcı Cache Temizleniyor (Tarayıcılar Hariç)" ;;
@@ -164,6 +168,8 @@ L() {
     en::hdr_app_uninstaller)  echo "🗑️  Uninstalling Applications" ;;
     tr::hdr_project_artifacts) echo "🧱 Proje Yapıları Temizleniyor" ;;
     en::hdr_project_artifacts) echo "🧱 Cleaning Project Artifacts" ;;
+    tr::hdr_installer_artifacts) echo "📦 Kurulum Dosyaları Temizleniyor" ;;
+    en::hdr_installer_artifacts) echo "📦 Cleaning Installer Files" ;;
     tr::hdr_mail_downloads)   echo "📧 Mail İndirilenler Temizleniyor" ;;
     en::hdr_mail_downloads)   echo "📧 Cleaning Mail Downloads" ;;
     tr::hdr_diagnostic)       echo "🩺 Tanılama Raporları Temizleniyor" ;;
@@ -336,6 +342,10 @@ L() {
     en::spotlight_rebuild)    echo "Spotlight indexing rebuilt successfully." ;;
     tr::no_history)           echo "Henüz temizlik geçmişi yok." ;;
     en::no_history)           echo "No cleanup history yet." ;;
+    tr::no_installer_artifact_specified) echo "Kurulum dosyası seçilmedi; İndirilenler klasörüne dokunulmadı." ;;
+    en::no_installer_artifact_specified) echo "No installer file selected; Downloads was left untouched." ;;
+    tr::invalid_installer_artifact) echo "Geçersiz veya değişmiş kurulum dosyası" ;;
+    en::invalid_installer_artifact) echo "Invalid or changed installer file" ;;
 
     # ── Fallback ─────────────────────────────────────────────
     *) echo "$key" ;;
@@ -409,6 +419,8 @@ APP_UNINSTALLER_PATH=""
 APP_UNINSTALLER_BUNDLE_ID=""
 PROJECT_ARTIFACT_CLEAN=""
 PROJECT_ARTIFACT_IDENTITIES=""
+INSTALLER_ARTIFACT_CLEAN=""
+INSTALLER_ARTIFACT_IDENTITIES=""
 
 MAIL_DOWNLOADS_DIR="$HOME/Library/Containers/com.apple.mail/Data/Library/Mail Downloads"
 
@@ -482,6 +494,7 @@ CATEGORIES=(
   "saved_app_state|cat_saved_app_state|scan_saved_app_state|clean_saved_app_state|0|caution|1"
   "other_trash|cat_other_trash|scan_other_trash|clean_other_trash|0|safe|1"
   "project_artifacts|cat_project_artifacts|scan_project_artifacts|clean_project_artifacts|0|caution|0"
+  "installer_artifacts|cat_installer_artifacts|scan_installer_artifacts|clean_installer_artifacts|0|caution|0"
 )
 
 # Derive parallel arrays from registry (preserves index-based access)
@@ -726,511 +739,9 @@ confirm() {
 # ─── Trash-First Safe Deletion Infrastructure ────────────────────────────────
 # Moves a file/directory to macOS Trash via AppleScript; falls back to mv ~/.Trash
 # Returns 0 on success, 1 on failure
-_trash_item() {
-  local path="$1"
-  # -L keeps broken symlinks (target gone, -e is false) in scope.
-  [ -e "$path" ] || [ -L "$path" ] || return 0
-
-  local base expected expected_was_free=false
-  base=$(basename "$path")
-  expected="$HOME/.Trash/$base"
-  if [ ! -e "$expected" ] && [ ! -L "$expected" ]; then
-    expected_was_free=true
-  fi
-
-  # Tier 1: AppleScript (native Finder trash with undo support).
-  # Pass the path as an argv item rather than interpolating it into the script
-  # source, so quotes/backslashes in a filename can't break or inject script.
-  if osascript -e 'on run argv' \
-               -e 'tell application "Finder" to move POSIX file (item 1 of argv) to trash' \
-               -e 'end run' "$path" >/dev/null 2>&1; then
-    if $expected_was_free && { [ -e "$expected" ] || [ -L "$expected" ]; }; then
-      echo "$expected"
-    fi
-    return 0
-  fi
-
-  # Tier 2: Manual mv to ~/.Trash with collision-safe naming
-  [ -L "$HOME/.Trash" ] && return 1
-  if [ ! -d "$HOME/.Trash" ]; then
-    mkdir -m 700 "$HOME/.Trash" 2>/dev/null || return 1
-  fi
-  [ -O "$HOME/.Trash" ] || return 1
-  local dest
-  dest="$HOME/.Trash/$base"
-  if [ -e "$dest" ] || [ -L "$dest" ]; then
-    # Append timestamp + pid + random so collisions within the same second
-    # (two identically-named items) don't overwrite each other.
-    dest="$HOME/.Trash/${base}.$(date +%s).$$.${RANDOM}"
-    while [ -e "$dest" ] || [ -L "$dest" ]; do
-      dest="$HOME/.Trash/${base}.$(date +%s).$$.${RANDOM}"
-    done
-  fi
-  if mv "$path" "$dest" 2>/dev/null; then
-    echo "$dest"
-    return 0
-  fi
-  return 1
-}
-
-# Determine if we should use rm -rf or trash-first for a given context
-# Arguments: needs_sudo_flag (0 or 1), is_trash_empty (0 or 1)
-_should_force_rm() {
-  local needs_sudo="${1:-0}"
-  local is_trash_empty="${2:-0}"
-  # Force RM conditions:
-  #   1. Explicit test bypass in an isolated temporary HOME
-  #   2. Category requires sudo (system paths)
-  #   3. We are emptying the trash itself
-  if [ "$FORCE_RM" = "1" ] && [ "$TEST_MODE" = "1" ]; then
-    case "$HOME" in
-      /tmp/*|/private/tmp/*|/private/var/folders/*) return 0 ;;
-    esac
-  fi
-  [ "$needs_sudo" -eq 1 ] && return 0
-  [ "$is_trash_empty" -eq 1 ] && return 0
-  return 1
-}
-
-# Run a non-file mutating command under the same dry-run contract as safe_rm.
-# Arguments: success translation key, failure translation key, command argv...
-run_mutating_action() {
-  local success_key="$1"
-  local failure_key="$2"
-  shift 2
-
-  if [ "$DRYRUN" = "1" ]; then
-    success "$(L "$success_key") — $(L would_run)"
-    TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-    return 0
-  fi
-
-  if "$@" >/dev/null 2>&1; then
-    success "$(L "$success_key")"
-    TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-    return 0
-  fi
-
-  warn "$(L "$failure_key")"
-  record_clean_warning "$(L "$failure_key")"
-  return 1
-}
-
-_simctl_erase_all() {
-  xcrun simctl shutdown all >/dev/null 2>&1 || true
-  xcrun simctl erase all
-}
-
-# Classify the only filesystem scopes the cleaner is allowed to mutate. The
-# value is used both before and after resolving parent symlinks; a scope change
-# is treated as an escape and rejected.
-_removal_scope() {
-  local path="$1"
-  case "$path" in
-    "$HOME") echo "protected" ;;
-    "$HOME/Downloads"|"$HOME/Downloads"/*) echo "protected" ;;
-    "$HOME"/*) echo "home" ;;
-    /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*) echo "temporary" ;;
-    /Library/Caches/*) echo "system_cache" ;;
-    /Library/Logs/*) echo "system_logs" ;;
-    /Library/LaunchAgents/*|/Library/LaunchDaemons/*) echo "launchagents" ;;
-    /Applications/*.app) echo "applications" ;;
-    /Volumes/*/.Trashes/*) echo "external_trash" ;;
-    *) echo "protected" ;;
-  esac
-}
-
-_scope_allowed_for_context() {
-  local scope="$1"
-  case "$scope" in
-    home|temporary) return 0 ;;
-    system_cache) [ "$_CURRENT_CATEGORY" = "system_cache" ] ;;
-    system_logs) [ "$_CURRENT_CATEGORY" = "logs" ] ;;
-    launchagents) [ "$_CURRENT_CATEGORY" = "launchagents" ] ;;
-    applications) [ "$_CURRENT_CATEGORY" = "app_uninstaller" ] ;;
-    external_trash) [ "$_CURRENT_CATEGORY" = "other_trash" ] ;;
-    *) return 1 ;;
-  esac
-}
-
-# Validate a deletion target without resolving the final component. Removing a
-# leaf symlink removes the link itself; resolving its parent catches ancestor
-# symlink escapes that could redirect rm to a different filesystem scope.
-# Mode "contents" additionally rejects a symlink target and resolves the target
-# directory itself because its children are about to be traversed.
-_validate_removal_path() {
-  local path="$1"
-  local mode="${2:-leaf}"
-  local label="${3:-$1}"
-  local reason=""
-
-  if [ -z "$path" ]; then
-    reason="$(L empty_path): $label"
-  elif [ "${path#/}" = "$path" ]; then
-    reason="$(L protected_path): relative path: $path"
-  elif printf '%s' "$path" | LC_ALL=C grep -q '[[:cntrl:]]'; then
-    reason="$(L protected_path): control character in path"
-  else
-    case "$path" in
-      */../*|*/..) reason="$(L protected_path): parent traversal: $path" ;;
-      /|//*) reason="$(L protected_path): $path" ;;
-    esac
-  fi
-
-  local logical_scope=""
-  if [ -z "$reason" ]; then
-    logical_scope=$(_removal_scope "$path")
-    if ! _scope_allowed_for_context "$logical_scope"; then
-      reason="$(L protected_path): $path"
-    fi
-  fi
-
-  local physical_path="" parent base physical_parent physical_scope
-  if [ -z "$reason" ]; then
-    if [ "$mode" = "contents" ]; then
-      if [ -L "$path" ]; then
-        reason="$(L protected_path): symlinked directory: $path"
-      else
-        physical_path=$(cd -P "$path" 2>/dev/null && pwd -P) || \
-          reason="$(L protected_path): unresolved path: $path"
-      fi
-    else
-      parent=$(dirname "$path")
-      base=$(basename "$path")
-      physical_parent=$(cd -P "$parent" 2>/dev/null && pwd -P) || \
-        reason="$(L protected_path): unresolved parent: $path"
-      [ -n "$physical_parent" ] && physical_path="$physical_parent/$base"
-    fi
-  fi
-
-  if [ -z "$reason" ]; then
-    physical_scope=$(_removal_scope "$physical_path")
-    if [ "$logical_scope" != "$physical_scope" ] || \
-       ! _scope_allowed_for_context "$physical_scope"; then
-      reason="$(L protected_path): symlink scope escape: $path"
-    fi
-  fi
-
-  if [ -n "$reason" ]; then
-    err "$reason"
-    record_clean_error "$reason"
-    return 1
-  fi
-  return 0
-}
-
-_requires_live_guard() {
-  case "$1" in
-    "$HOME/Library/Caches"/*|\
-    "$HOME/Library/Safari"|"$HOME/Library/Safari"/*|\
-    "$HOME/Library/Cookies"|"$HOME/Library/Cookies"/*|\
-    "$HOME/Library/WebKit"/*|"$HOME/Library/HTTPStorages"/*|\
-    "$HOME/Library/Application Support/Google/Chrome"|\
-    "$HOME/Library/Application Support/Google/Chrome"/*|\
-    "$HOME/Library/Application Support/Firefox"|\
-    "$HOME/Library/Application Support/Firefox"/*|\
-    "$HOME/Library/Application Support/BraveSoftware"|\
-    "$HOME/Library/Application Support/BraveSoftware"/*|\
-    "$HOME/Library/Application Support/Microsoft Edge"|\
-    "$HOME/Library/Application Support/Microsoft Edge"/*|\
-    "$HOME/Library/Application Support/Arc"|\
-    "$HOME/Library/Application Support/Arc"/*) return 0 ;;
-  esac
-  return 1
-}
-
-_path_contains_database() {
-  local path="$1"
-  [ -d "$path" ] || return 1
-  find "$path" -maxdepth 4 -type f \
-    \( -name '*.sqlite' -o -name '*.sqlite3' -o -name '*.db' \
-       -o -name '*-wal' -o -name '*-shm' \) -print -quit 2>/dev/null | \
-    grep -q .
-}
-
-# Return 0 when lsof found an open file, 1 when it found none, and 2 when the
-# inspection was unavailable or exceeded its deadline. The deadline prevents a
-# recursive lsof walk from hanging a cleanup on large browser profiles.
-_path_has_open_files() {
-  local path="$1" lsof_bin pid loops=0 status
-  lsof_bin=$(command -v lsof 2>/dev/null) || return 2
-  "$lsof_bin" -nP +D "$path" >/dev/null 2>&1 &
-  pid=$!
-  while kill -0 "$pid" 2>/dev/null; do
-    if [ "$loops" -ge 30 ]; then
-      kill "$pid" 2>/dev/null || true
-      wait "$pid" 2>/dev/null || true
-      return 2
-    fi
-    sleep 0.1
-    loops=$((loops + 1))
-  done
-  if wait "$pid" 2>/dev/null; then status=0; else status=$?; fi
-  [ "$status" -eq 0 ] && return 0
-  [ "$status" -eq 1 ] && return 1
-  return 2
-}
-
-_path_owner_is_running() {
-  local path="$1" owner bundle_id="" app_list
-  owner=$(basename "$path")
-  case "$path" in
-    "$HOME/Library/Safari"*) bundle_id="com.apple.Safari" ;;
-    *"/Google/Chrome"*) bundle_id="com.google.Chrome" ;;
-    *"/Firefox"*) bundle_id="org.mozilla.firefox" ;;
-    *"/BraveSoftware"*) bundle_id="com.brave.Browser" ;;
-    *"/Microsoft Edge"*) bundle_id="com.microsoft.edgemac" ;;
-    *"/Arc"*) bundle_id="company.thebrowser.Browser" ;;
-    *)
-      case "$owner" in
-        com.*|org.*|net.*|io.*|dev.*) bundle_id="$owner" ;;
-      esac
-      ;;
-  esac
-  [ -n "$bundle_id" ] || return 1
-  [ -x /usr/bin/lsappinfo ] || return 1
-  app_list=$(/usr/bin/lsappinfo list 2>/dev/null) || return 1
-  case "$app_list" in *"$bundle_id"*) return 0 ;; esac
-  return 1
-}
-
-_guard_live_path() {
-  local path="$1" label="${2:-$1}" open_status
-  _requires_live_guard "$path" || return 0
-
-  if _path_owner_is_running "$path"; then
-    warn "$label: $(L active_path_skipped)"
-    record_clean_warning "$label: $(L active_path_skipped)"
-    return 1
-  fi
-
-  if _path_has_open_files "$path"; then
-    open_status=0
-  else
-    open_status=$?
-  fi
-  if [ "$open_status" -eq 0 ]; then
-    warn "$label: $(L active_path_skipped)"
-    record_clean_warning "$label: $(L active_path_skipped)"
-    return 1
-  fi
-  if [ "$open_status" -eq 2 ] && _path_contains_database "$path"; then
-    warn "$label: $(L live_check_failed)"
-    record_clean_warning "$label: $(L live_check_failed)"
-    return 1
-  fi
-  return 0
-}
-
-# Context variable: set by clean functions to indicate sudo context
-_CURRENT_NEEDS_SUDO=0
-_CURRENT_IS_TRASH_EMPTY=0
-# Category key for the item currently being cleaned (set by run_clean); used to
-# tag operation-log records. Empty when cleanup runs outside a category loop.
-_CURRENT_CATEGORY=""
-
-safe_rm() {
-  local path="$1"
-  local label="${2:-$1}"
-  local expected_identity="${3:-}"
-  [ -z "$path" ] && {
-    err "$(L empty_path): $label"
-    record_clean_error "$(L empty_path): $label"
-    return 0
-  }
-  if _is_excluded "$path"; then
-    info "$(L excluded): $label"
-    return 0
-  fi
-  # -L keeps broken symlinks (target gone, -e is false) in scope.
-  [ -e "$path" ] || [ -L "$path" ] || return 0
-  _validate_removal_path "$path" leaf "$label" || return 0
-  _guard_live_path "$path" "$label" || return 0
-  if [ -n "$expected_identity" ] && \
-     [ "$(_project_artifact_identity "$path" 2>/dev/null || true)" != "$expected_identity" ]; then
-    warn "$(L invalid_artifact): $path"
-    record_clean_error "$(L invalid_artifact): identity changed: $path"
-    return 0
-  fi
-  local sz_b; sz_b=$(get_size_bytes "$path")
-  local sz_h; sz_h=$(format_bytes "$sz_b")
-
-  if [ "$DRYRUN" = "1" ]; then
-    success "$label: ${BOLD}${sz_h}${NC} $(L would_remove)"
-    TOTAL_FREED=$((TOTAL_FREED + sz_b))
-    TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-    return 0
-  fi
-
-  if _should_force_rm "$_CURRENT_NEEDS_SUDO" "$_CURRENT_IS_TRASH_EMPTY"; then
-    if [ -n "$expected_identity" ] && \
-       [ "$(_project_artifact_identity "$path" 2>/dev/null || true)" != "$expected_identity" ]; then
-      warn "$(L invalid_artifact): $path"
-      record_clean_error "$(L invalid_artifact): identity changed: $path"
-      return 0
-    fi
-    # Direct rm -rf (sudo paths, trash emptying, or CI mode)
-    if $SUDO_AVAILABLE && [ "$_CURRENT_NEEDS_SUDO" -eq 1 ]; then
-      if sudo rm -rf "$path" 2>/dev/null; then
-        success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
-        TOTAL_FREED=$((TOTAL_FREED + sz_b))
-        TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-        oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
-      else
-        err "$label $(L delete_failed)"
-        record_clean_error "$label $(L delete_failed)"
-      fi
-    else
-      if rm -rf "$path" 2>/dev/null; then
-        success "$label: ${BOLD}${sz_h}${NC} $(L deleted)"
-        TOTAL_FREED=$((TOTAL_FREED + sz_b))
-        TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-        oplog_record "delete" "$sz_b" "$path" "" "$_CURRENT_CATEGORY"
-      else
-        err "$label $(L delete_failed)"
-        record_clean_error "$label $(L delete_failed)"
-      fi
-    fi
-  else
-    # Trash-first (user files, non-sudo)
-    if [ -n "$expected_identity" ] && \
-       [ "$(_project_artifact_identity "$path" 2>/dev/null || true)" != "$expected_identity" ]; then
-      warn "$(L invalid_artifact): $path"
-      record_clean_error "$(L invalid_artifact): identity changed: $path"
-      return 0
-    fi
-    local _td; _td="$(_trash_item "$path" || true)"
-    if [ -n "$_td" ] || [ ! -e "$path" ]; then
-      success "$label: ${BOLD}${sz_h}${NC} $(L trashed)"
-      TOTAL_FREED=$((TOTAL_FREED + sz_b))
-      TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-      oplog_record "trash" "$sz_b" "$path" "$_td" "$_CURRENT_CATEGORY"
-    else
-      err "$label $(L delete_failed)"
-      record_clean_error "$label $(L delete_failed)"
-    fi
-  fi
-}
-
-safe_rm_contents() {
-  local path="$1"
-  local label="${2:-$1}"
-  [ -z "$path" ] && {
-    record_clean_error "$(L empty_path): $label"
-    return 0
-  }
-  [ -d "$path" ] || return 0
-  _validate_removal_path "$path" contents "$label" || return 0
-  _guard_live_path "$path" "$label" || return 0
-  # Exclusion-aware mode: when the user defined protected paths, delete each
-  # child individually (via safe_rm, which honors excludes + dry-run) so a
-  # protected item inside the directory is never swept away by a bulk rm.
-  if [ -n "$EXCLUDE_RAW" ]; then
-    local child
-    while IFS= read -r -d '' child; do
-      safe_rm "$child" "$child"
-    done < <(find "$path" -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
-    return 0
-  fi
-  local sz_b; sz_b=$(get_dir_size_bytes "$path")
-  [ "$sz_b" -le 0 ] 2>/dev/null && return 0
-  local sz_h; sz_h=$(format_bytes "$sz_b")
-
-  if [ "$DRYRUN" = "1" ]; then
-    success "$label: ${BOLD}${sz_h}${NC} $(L would_remove)"
-    TOTAL_FREED=$((TOTAL_FREED + sz_b))
-    TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-    return 0
-  fi
-
-  if _should_force_rm "$_CURRENT_NEEDS_SUDO" "$_CURRENT_IS_TRASH_EMPTY"; then
-    # Delete children independently. macOS may keep a few live service files
-    # open or recreate them during cleanup; one such item must not turn all
-    # successfully removed siblings into a category-wide failure.
-    local removed_any=false
-    local delete_failed=false
-    local removed_bytes=0
-    local child child_sz
-    while IFS= read -r -d '' child; do
-      if ! _validate_removal_path "$child" leaf "$label"; then
-        delete_failed=true
-        continue
-      fi
-      child_sz=$(get_size_bytes "$child")
-      local child_removed=false
-      if $SUDO_AVAILABLE && [ "$_CURRENT_NEEDS_SUDO" -eq 1 ]; then
-        sudo rm -rf "$child" 2>/dev/null && child_removed=true
-      else
-        rm -rf "$child" 2>/dev/null && child_removed=true
-      fi
-      # A live service can race the command and remove the path first. Treat a
-      # path that is now absent as successfully cleaned regardless of rm's code.
-      if $child_removed || { [ ! -e "$child" ] && [ ! -L "$child" ]; }; then
-        removed_any=true
-        removed_bytes=$((removed_bytes + child_sz))
-        oplog_record "delete" "$child_sz" "$child" "" "$_CURRENT_CATEGORY"
-      else
-        delete_failed=true
-      fi
-    done < <(find "$path" -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
-
-    if $removed_any; then
-      local removed_h; removed_h=$(format_bytes "$removed_bytes")
-      success "$label: ${BOLD}${removed_h}${NC} $(L deleted)"
-      TOTAL_FREED=$((TOTAL_FREED + removed_bytes))
-      TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-    fi
-    if $delete_failed; then
-      if $removed_any; then
-        warn "$label: $(L partial_skipped)"
-        record_clean_warning "$label: $(L partial_skipped)"
-      else
-        err "$label $(L delete_failed)"
-        record_clean_error "$label $(L delete_failed)"
-      fi
-    fi
-  else
-    # Trash-first: move each child item to trash individually
-    local trashed_any=false
-    local trash_failed=false
-    local trashed_bytes=0
-    local child _td
-    while IFS= read -r -d '' child; do
-      if ! _validate_removal_path "$child" leaf "$label"; then
-        trash_failed=true
-        continue
-      fi
-      # Capture size BEFORE trashing; afterwards the child is gone and any size
-      # read returns 0. Use get_size_bytes so files (not just dirs) are measured.
-      local child_sz; child_sz=$(get_size_bytes "$child")
-      _td="$(_trash_item "$child" || true)"
-      if [ -n "$_td" ] || [ ! -e "$child" ]; then
-        trashed_any=true
-        trashed_bytes=$((trashed_bytes + child_sz))
-        oplog_record "trash" "$child_sz" "$child" "$_td" "$_CURRENT_CATEGORY"
-      else
-        trash_failed=true
-      fi
-    done < <(find "$path" -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
-    if $trashed_any; then
-      local trashed_h; trashed_h=$(format_bytes "$trashed_bytes")
-      success "$label: ${BOLD}${trashed_h}${NC} $(L trashed)"
-      TOTAL_FREED=$((TOTAL_FREED + trashed_bytes))
-      TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-    fi
-    if $trash_failed; then
-      if $trashed_any; then
-        warn "$label: $(L partial_skipped)"
-        record_clean_warning "$label: $(L partial_skipped)"
-      else
-        err "$label $(L delete_failed)"
-        record_clean_error "$label $(L delete_failed)"
-      fi
-    fi
-  fi
-}
-
-# ─── Sudo Check ─────────────────────────────────────────────────────────────
+# All filesystem and owner-command mutations flow through the shared executor.
+# shellcheck source=lib/core/executor.sh
+source "$SCRIPT_DIR/lib/core/executor.sh"
 sudo_check() {
   echo ""
   info "$(L sudo_info)"
@@ -1486,26 +997,9 @@ scan_ios_backups() {
   CAT_SIZES[9]=$s
 }
 
-scan_app_uninstaller() {
-  local total=0
-  local app app_name bundle_id s
-  # Include shallow vendor folders while pruning each package so helper apps
-  # inside Contents never appear as independently uninstallable applications.
-  while IFS= read -r -d '' app; do
-    [ -L "$app" ] && continue
-    app_name=$(basename "$app" .app)
-    bundle_id=$(get_app_bundle_id "$app")
-    local dir
-    while IFS= read -r -d '' dir; do
-      [ -e "$dir" ] || continue
-      s=$(get_size_bytes "$dir") || s=0
-      total=$((total + s))
-    done < <(app_leftover_paths "$app_name" "$bundle_id")
-  done < <(find /Applications "$HOME/Applications" -maxdepth 3 -name "*.app" -prune -print0 2>/dev/null)
-  local i; i=$(cat_index_by_id app_uninstaller)
-  CAT_SIZES[i]=$total
-}
-
+# App discovery and removal are kept together so scan and clean use the same
+# bundle identity and leftover-path policy.
+source "$SCRIPT_DIR/lib/categories/app_uninstaller.sh"
 scan_mail_downloads() {
   local s=0
   if [ -d "$MAIL_DOWNLOADS_DIR" ]; then
@@ -1845,97 +1339,6 @@ clean_ios_backups() {
       safe_rm "${backup_paths[$real_idx]}" "iOS Backup: ${backup_names[$real_idx]}"
     fi
   done
-}
-
-clean_app_uninstaller() {
-  _CURRENT_NEEDS_SUDO=0
-  # Finder's Trash path can request macOS authorization for root-owned apps in
-  # /Applications and keeps the operation recoverable.  The old forced rm path
-  # had neither property and silently failed for the most common installation
-  # layout.
-  _CURRENT_IS_TRASH_EMPTY=0
-  header "$(L hdr_app_uninstaller)"
-  if $JSON_MODE; then
-    if [ -z "$APP_UNINSTALLER_PATH" ] && [ -z "$APP_UNINSTALLER_CLEAN" ]; then
-      info "$(L no_app_specified)"
-      return
-    fi
-
-    local app_paths=()
-    if [ -n "$APP_UNINSTALLER_PATH" ]; then
-      if ! is_valid_app_bundle_path "$APP_UNINSTALLER_PATH"; then
-        record_clean_error "Invalid application bundle path"
-        return
-      fi
-      app_paths+=("$APP_UNINSTALLER_PATH")
-    else
-      # Backwards-compatible path for the scan-results cleaner.  The dedicated
-      # uninstaller endpoint uses the explicit, server-verified path above.
-      local parsed_apps=()
-      IFS=',' read -ra parsed_apps <<< "$APP_UNINSTALLER_CLEAN"
-      local legacy_name legacy_path
-      for legacy_name in "${parsed_apps[@]}"; do
-        legacy_name="${legacy_name## }"; legacy_name="${legacy_name%% }"
-        [ -z "$legacy_name" ] && continue
-        case "$legacy_name" in
-          */*|*..*)
-            record_clean_error "$(L invalid_path_traversal): $legacy_name"
-            continue
-            ;;
-        esac
-        legacy_path=""
-        [ -d "/Applications/$legacy_name.app" ] && legacy_path="/Applications/$legacy_name.app"
-        [ -z "$legacy_path" ] && [ -d "$HOME/Applications/$legacy_name.app" ] \
-          && legacy_path="$HOME/Applications/$legacy_name.app"
-        if [ -n "$legacy_path" ]; then
-          app_paths+=("$legacy_path")
-        else
-          record_clean_error "Application is no longer installed: $legacy_name"
-        fi
-      done
-    fi
-
-    local app_path app_name bundle_id
-    for app_path in ${app_paths[@]+"${app_paths[@]}"}; do
-      app_name=$(basename "$app_path" .app)
-      # Resolve the real bundle id from Info.plist BEFORE deleting the .app,
-      # so leftovers keyed by bundle id can still be located afterwards.
-      bundle_id=""
-      if [ -n "$app_path" ] && [ -d "$app_path" ]; then
-        bundle_id=$(get_app_bundle_id "$app_path")
-      elif is_valid_bundle_id "$APP_UNINSTALLER_BUNDLE_ID"; then
-        # Homebrew may already have removed the bundle.  The server captured
-        # this id during its fresh pre-delete discovery so exact-id leftovers
-        # can still be removed safely.
-        bundle_id="$APP_UNINSTALLER_BUNDLE_ID"
-      fi
-      if is_protected_app_bundle_id "$bundle_id"; then
-        record_clean_error "Protected application cannot be removed: $app_name"
-        continue
-      fi
-      if [ -e "$app_path" ] || [ -L "$app_path" ]; then
-        safe_rm "$app_path" "App: $app_name"
-      fi
-      # Never erase an installed app's data after its bundle deletion failed.
-      # Dry-run is the exception: the bundle intentionally remains in place.
-      if [ "$DRYRUN" != "1" ] && { [ -e "$app_path" ] || [ -L "$app_path" ]; }; then
-        continue
-      fi
-      if app_bundle_sibling_exists "$bundle_id" "$app_path"; then
-        warn "Shared application data preserved; another bundle uses $bundle_id"
-        record_clean_warning "Shared application data preserved; another bundle uses $bundle_id"
-        continue
-      fi
-      local dir
-      while IFS= read -r -d '' dir; do
-        if [ -e "$dir" ]; then
-          safe_rm "$dir" "Leftover: $dir"
-        fi
-      done < <(app_leftover_paths "$app_name" "$bundle_id")
-    done
-    return
-  fi
-  info "$(L uninstaller_cli_only)"
 }
 
 clean_mail_downloads() {
@@ -2870,137 +2273,6 @@ scan_ios_backups_subitems_json() {
   done < <(find "$backup_dir" -maxdepth 1 -mindepth 1 -type d -print0 2>/dev/null | sort -z)
 }
 
-get_app_bundle_id() {
-  local app_path="$1"
-  local plist="$app_path/Contents/Info.plist"
-  [ -f "$plist" ] || { echo ""; return; }
-  local bid
-  bid=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$plist" 2>/dev/null) || bid=""
-  # Only accept a sane reverse-DNS-style id; reject anything that could
-  # widen a leftover path (slashes, dot-dot, spaces, empty).
-  case "$bid" in
-    ""|*/*|*..*|*" "*) echo "" ;;
-    *) echo "$bid" ;;
-  esac
-}
-
-is_valid_bundle_id() {
-  local bid="${1:-}"
-  case "$bid" in
-    ""|*/*|*..*|*" "*|*$'\n'*|*$'\t'*) return 1 ;;
-  esac
-  [[ "$bid" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{1,254}$ ]]
-}
-
-# Defense in depth for the explicit path accepted by the JSON uninstaller.
-# The web server also resolves this target from a fresh discovery snapshot.
-is_valid_app_bundle_path() {
-  local app_path="${1:-}"
-  [ -n "$app_path" ] || return 1
-  [ ! -L "$app_path" ] || return 1
-  case "$app_path" in
-    *$'\n'*|*$'\r'*|*$'\t'*|*'/../'*|*'/./'*|*'//'*) return 1 ;;
-  esac
-  case "$app_path" in
-    /Applications/*.app|"$HOME"/Applications/*.app) return 0 ;;
-  esac
-  return 1
-}
-
-is_protected_app_bundle_id() {
-  case "${1:-}" in com.apple.*) return 0 ;; esac
-  return 1
-}
-
-app_bundle_sibling_exists() {
-  local bundle_id="$1" excluded_path="${2:-}" candidate candidate_id
-  [ -n "$bundle_id" ] || return 1
-  while IFS= read -r -d '' candidate; do
-    [ "$candidate" = "$excluded_path" ] && continue
-    [ -L "$candidate" ] && continue
-    candidate_id=$(get_app_bundle_id "$candidate")
-    [ "$candidate_id" = "$bundle_id" ] && return 0
-  done < <(find /Applications "$HOME/Applications" -maxdepth 3 \
-    -name '*.app' -prune -print0 2>/dev/null)
-  return 1
-}
-
-# Emit the canonical leftover-path candidates for an app, NUL-separated.
-# Shared by scan + clean so the two can never drift. Bundle-id-derived paths
-# are emitted ONLY when a valid bundle id is known, so an empty id can never
-# collapse to a whole Library subdirectory (e.g. ~/Library/Containers).
-# Args: $1 = app_name, $2 = bundle_id (may be empty)
-app_leftover_paths() {
-  local app_name="$1" bundle_id="$2"
-  [ -n "$app_name" ] || return 0
-  printf '%s\0' "$HOME/Library/Application Support/$app_name"
-  printf '%s\0' "$HOME/Library/Caches/$app_name"
-  printf '%s\0' "$HOME/Library/Logs/$app_name"
-  if [ -n "$bundle_id" ]; then
-    printf '%s\0' "$HOME/Library/Application Support/$bundle_id"
-    printf '%s\0' "$HOME/Library/Caches/$bundle_id"
-    printf '%s\0' "$HOME/Library/Logs/$bundle_id"
-    printf '%s\0' "$HOME/Library/Containers/$bundle_id"
-    printf '%s\0' "$HOME/Library/Group Containers/$bundle_id"
-    printf '%s\0' "$HOME/Library/Group Containers/group.$bundle_id"
-    printf '%s\0' "$HOME/Library/Application Scripts/$bundle_id"
-    printf '%s\0' "$HOME/Library/HTTPStorages/$bundle_id"
-    printf '%s\0' "$HOME/Library/WebKit/$bundle_id"
-    printf '%s\0' "$HOME/Library/Cookies/${bundle_id}.binarycookies"
-    printf '%s\0' "$HOME/Library/LaunchAgents/${bundle_id}.plist"
-    printf '%s\0' "$HOME/Library/Preferences/${bundle_id}.plist"
-    printf '%s\0' "$HOME/Library/Saved Application State/${bundle_id}.savedState"
-  fi
-}
-
-get_app_display_name() {
-  local app_path="$1"
-  local plist="$app_path/Contents/Info.plist"
-  [ -f "$plist" ] || { basename "$app_path" .app; return; }
-  local name
-  name=$(/usr/libexec/PlistBuddy -c "Print :CFBundleDisplayName" "$plist" 2>/dev/null)
-  [ -z "$name" ] && name=$(/usr/libexec/PlistBuddy -c "Print :CFBundleName" "$plist" 2>/dev/null)
-  [ -z "$name" ] && name=$(basename "$app_path" .app)
-  
-  # Strip trailing .app in case plist returned it
-  name="${name%.app}"
-  
-  if [ "$name" = "zoom.us" ]; then
-    name="Zoom"
-  elif [ "$name" = "Code" ]; then
-    name="Visual Studio Code"
-  fi
-  echo "$name"
-}
-
-scan_app_uninstaller_subitems_json() {
-  local first=true
-  local app app_name bundle_id leftover_total s sz_h esc_name esc_bundle esc_id disp_name
-  while IFS= read -r -d '' app; do
-    [ -L "$app" ] && continue
-    app_name=$(basename "$app" .app)
-    bundle_id=$(get_app_bundle_id "$app")
-    leftover_total=0
-    local dir
-    while IFS= read -r -d '' dir; do
-      [ -e "$dir" ] || continue
-      s=$(get_size_bytes "$dir") || s=0
-      leftover_total=$((leftover_total + s))
-    done < <(app_leftover_paths "$app_name" "$bundle_id")
-    sz_h=$(format_bytes "$leftover_total")
-    disp_name=$(get_app_display_name "$app")
-    esc_name=$(json_escape_str "$disp_name")
-    esc_id=$(json_escape_str "$app_name")
-    esc_bundle=$(json_escape_str "$bundle_id")
-    if [ "$first" = true ]; then
-      first=false
-    else
-      echo ","
-    fi
-    echo -n "        {\"id\": \"$esc_id\", \"name\": \"$esc_name\", \"bundle_id\": \"$esc_bundle\", \"size_bytes\": $leftover_total, \"size_human\": \"$sz_h\", \"is_orphaned\": false}"
-  done < <(find /Applications "$HOME/Applications" -maxdepth 3 -name "*.app" -prune -print0 2>/dev/null | sort -z)
-}
-
 scan_mail_downloads_subitems_json() {
   local total=0
   local f sz_h esc_name s
@@ -3021,218 +2293,14 @@ scan_mail_downloads_subitems_json() {
   fi
 }
 
-# ─── Project Artifact Scanner ────────────────────────────────────────────────
-# Finds stale build/dependency directories (node_modules, target, .build, …)
-# sitting next to a project manifest, so they can be reclaimed and rebuilt.
+# Project artifact discovery and execution are isolated from the main router.
+# shellcheck source=lib/categories/project_artifacts.sh
+source "$SCRIPT_DIR/lib/categories/project_artifacts.sh"
 
-# Map a marker filename → "<TypeLabel> <artifact_dir_name>"
-_artifact_type_for_marker() {
-  case "$1" in
-    package.json)                  echo "Node.js node_modules" ;;
-    Cargo.toml)                    echo "Rust target" ;;
-    Package.swift)                 echo "Swift .build" ;;
-    go.mod)                        echo "Go vendor" ;;
-    build.gradle|build.gradle.kts) echo "Gradle build" ;;
-    pom.xml)                       echo "Maven target" ;;
-    composer.json)                 echo "PHP vendor" ;;
-    pubspec.yaml)                  echo "Flutter .dart_tool" ;;
-    CMakeLists.txt)                echo "CMake build" ;;
-    main.tf)                       echo "Terraform .terraform" ;;
-  esac
-}
-
-# Portable device/inode identity for macOS (BSD stat) and test hosts (GNU stat).
-_file_identity() {
-  stat -f '%d:%i' "$1" 2>/dev/null || stat -c '%d:%i' "$1" 2>/dev/null
-}
-
-# Return an identity bound to the artifact directory, its parent, and the exact
-# manifest that authorizes this artifact type. Ancestor symlinks may remain
-# inside HOME, but resolving outside HOME is always rejected.
-_project_artifact_identity() {
-  local path="$1"
-  local requested_marker="${2:-}"
-  [ -d "$path" ] && [ ! -L "$path" ] || return 1
-  case "$path" in
-    "$HOME"/*) ;;
-    *) return 1 ;;
-  esac
-  case "$path" in
-    "$HOME/Downloads"/*|*/../*|*/..) return 1 ;;
-  esac
-
-  local parent base physical_parent physical_home marker type_info artifact_name
-  local artifact_id parent_id marker_id
-  parent=$(dirname "$path")
-  base=$(basename "$path")
-  physical_parent=$(cd -P "$parent" 2>/dev/null && pwd -P) || return 1
-  physical_home=$(cd -P "$HOME" 2>/dev/null && pwd -P) || return 1
-  case "$physical_parent" in
-    "$physical_home"/*) ;;
-    *) return 1 ;;
-  esac
-
-  local IFS='|'
-  for marker in $_PROJECT_MARKERS; do
-    [ -z "$requested_marker" ] || [ "$marker" = "$requested_marker" ] || continue
-    type_info=$(_artifact_type_for_marker "$marker")
-    artifact_name="${type_info##* }"
-    [ "$artifact_name" = "$base" ] || continue
-    [ -f "$parent/$marker" ] && [ ! -L "$parent/$marker" ] || continue
-    artifact_id=$(_file_identity "$path") || return 1
-    parent_id=$(_file_identity "$parent") || return 1
-    marker_id=$(_file_identity "$parent/$marker") || return 1
-    printf '%s:%s:%s:%s\n' \
-      "$artifact_id" "$parent_id" "$marker_id" \
-      "$marker"
-    return 0
-  done
-  return 1
-}
-
-# Discover artifacts; emits
-# "<size>\t<type>\t<path>\t<identity>" lines. Paths containing delimiters used
-# by the CLI transport are skipped rather than ambiguously reinterpreted.
-_find_project_artifacts() {
-  local root_rel root marker parent mbase type_info label artifact_name art_path s identity
-  for root_rel in "${_PROJECT_SCAN_ROOTS[@]}"; do
-    root="$HOME/$root_rel"
-    [ -d "$root" ] || continue
-    while IFS= read -r marker; do
-      [ -n "$marker" ] || continue
-      mbase=$(basename "$marker")
-      type_info=$(_artifact_type_for_marker "$mbase")
-      [ -z "$type_info" ] && continue
-      label="${type_info% *}"
-      artifact_name="${type_info##* }"
-      parent=$(dirname "$marker")
-      art_path="$parent/$artifact_name"
-      [ -d "$art_path" ] || continue
-      case "$art_path" in *','*|*$'\t'*|*$'\n'*) continue ;; esac
-      identity=$(_project_artifact_identity "$art_path" "$mbase") || continue
-      s=$(get_dir_size_bytes "$art_path") || s=0
-      [ "$s" -ge "$_PROJECT_ARTIFACT_MIN_BYTES" ] 2>/dev/null || continue
-      printf '%s\t%s\t%s\t%s\n' "$s" "$label" "$art_path" "$identity"
-    done < <(find "$root" -maxdepth 6 \
-        \( -name node_modules -o -name target -o -name .build -o -name build \
-           -o -name vendor -o -name .dart_tool -o -name .terraform -o -name .git \
-           -o -name Pods -o -name __pycache__ \) -prune -o \
-        -type f \( -name package.json -o -name Cargo.toml -o -name Package.swift \
-           -o -name go.mod -o -name build.gradle -o -name build.gradle.kts \
-           -o -name pom.xml -o -name composer.json -o -name pubspec.yaml \
-           -o -name CMakeLists.txt -o -name main.tf \) -print 2>/dev/null)
-  done
-}
-
-# Cache discovery for the lifetime of the process (scan + subitems share it).
-_PROJECT_ARTIFACTS_CACHED=""
-_PROJECT_ARTIFACTS_DONE=false
-_get_project_artifacts() {
-  if [ "$_PROJECT_ARTIFACTS_DONE" = false ]; then
-    _PROJECT_ARTIFACTS_CACHED=$(_find_project_artifacts)
-    _PROJECT_ARTIFACTS_DONE=true
-  fi
-  printf '%s\n' "$_PROJECT_ARTIFACTS_CACHED"
-}
-
-# Validate an artifact path before deletion: must be an absolute, traversal-free
-# path under $HOME whose basename is a recognized artifact dir AND whose parent
-# holds a recognized project marker. This is what makes the web API safe — only
-# genuine artifact directories adjacent to a project manifest can be removed.
-_is_valid_project_artifact() {
-  local path="$1"
-  local expected_identity="${2:-}"
-  case "$path" in
-    /*) ;; *) return 1 ;;
-  esac
-  case "$path" in */../*|*/..) return 1 ;; esac
-  case "$path" in
-    "$HOME"/*) ;; *) return 1 ;;
-  esac
-  local base; base=$(basename "$path")
-  case "|$_PROJECT_ARTIFACT_NAMES|" in
-    *"|$base|"*) ;; *) return 1 ;;
-  esac
-  _validate_removal_path "$path" contents "Artifact: $path" || return 1
-  local actual_identity
-  actual_identity=$(_project_artifact_identity "$path") || return 1
-  [ -z "$expected_identity" ] || [ "$actual_identity" = "$expected_identity" ]
-}
-
-# Category scan_fn — sets this category's size from discovered artifacts.
-scan_project_artifacts() {
-  local total=0 s
-  while IFS=$'\t' read -r s _ _; do
-    [ -n "$s" ] && total=$((total + s))
-  done < <(_get_project_artifacts)
-  local i
-  for i in "${!CAT_IDS[@]}"; do
-    [ "${CAT_IDS[$i]}" = "project_artifacts" ] && { CAT_SIZES[i]=$total; break; }
-  done
-}
-
-clean_project_artifacts() {
-  _CURRENT_NEEDS_SUDO=0; _CURRENT_IS_TRASH_EMPTY=0
-  header "$(L hdr_project_artifacts)"
-
-  if $JSON_MODE; then
-    if [ -z "$PROJECT_ARTIFACT_CLEAN" ]; then
-      info "$(L no_artifact_specified)"
-      return
-    fi
-    local parsed=() identities=()
-    IFS=',' read -ra parsed <<< "$PROJECT_ARTIFACT_CLEAN"
-    IFS=',' read -ra identities <<< "$PROJECT_ARTIFACT_IDENTITIES"
-    local p expected_identity artifact_index=0
-    for p in "${parsed[@]}"; do
-      p="${p## }"; p="${p%% }"
-      [ -z "$p" ] && continue
-      expected_identity="${identities[$artifact_index]:-}"
-      artifact_index=$((artifact_index + 1))
-      if [ -n "$expected_identity" ] && \
-         _is_valid_project_artifact "$p" "$expected_identity"; then
-        safe_rm "$p" "Artifact: $p" "$expected_identity"
-      else
-        warn "$(L invalid_artifact): $p"
-        record_clean_error "$(L invalid_artifact): missing or changed scan identity: $p"
-      fi
-    done
-    return
-  fi
-
-  # Interactive CLI mode: list each artifact and confirm individually.
-  local s label path identity sz_h
-  while IFS=$'\t' read -r s label path identity; do
-    [ -n "$path" ] || continue
-    sz_h=$(format_bytes "$s")
-    if confirm "$label · $(basename "$(dirname "$path")") · $sz_h — sil?"; then
-      if _is_valid_project_artifact "$path" "$identity"; then
-        safe_rm "$path" "Artifact: $path" "$identity"
-      else
-        warn "$(L invalid_artifact): $path"
-      fi
-    fi
-  done < <(_get_project_artifacts)
-}
-
-scan_project_artifacts_subitems_json() {
-  local first=true s label path identity sz_h esc_id esc_label esc_name proj_name orphaned mtime now days
-  now=$(date +%s)
-  while IFS=$'\t' read -r s label path identity; do
-    [ -n "$path" ] || continue
-    sz_h=$(format_bytes "$s")
-    proj_name=$(basename "$(dirname "$path")")
-    orphaned=false
-    mtime=$(stat -f %m "$path" 2>/dev/null || echo "$now")
-    days=$(( (now - mtime) / 86400 ))
-    [ "$days" -gt 30 ] && orphaned=true
-    esc_id=$(json_escape_str "$path")
-    esc_label=$(json_escape_str "$label")
-    esc_name=$(json_escape_str "$proj_name")
-    if [ "$first" = true ]; then first=false; else echo ","; fi
-    echo -n "        {\"id\": \"$esc_id\", \"identity\": \"$identity\", \"name\": \"$esc_name\", \"type\": \"$esc_label\", \"path\": \"$esc_id\", \"size_bytes\": $s, \"size_human\": \"$sz_h\", \"days_since\": $days, \"is_orphaned\": $orphaned}"
-  done < <(_get_project_artifacts)
-}
+# Downloads installer candidates require explicit file selection and a fresh
+# device/inode/size/mtime identity at the destructive sink.
+# shellcheck source=lib/categories/installer_artifacts.sh
+source "$SCRIPT_DIR/lib/categories/installer_artifacts.sh"
 
 # ─── Special Action Handlers ────────────────────────────────────────────────
 
@@ -3489,6 +2557,95 @@ do_spotlight_reindex() {
 
 # ─── JSON Scan ───────────────────────────────────────────────────────────────
 
+emit_category_json() {
+  local i="$1"
+  local id="${CAT_IDS[$i]}"
+  local sz_h; sz_h=$(format_bytes "${CAT_SIZES[$i]}")
+  local needs_sudo="false"
+  [ "${CAT_NEEDS_SUDO[$i]}" -eq 1 ] && needs_sudo="true"
+  local in_total="false"
+  [ "${CAT_IN_TOTAL[$i]}" -eq 1 ] && in_total="true"
+
+  echo "{"
+  echo "      \"size_bytes\": ${CAT_SIZES[$i]},"
+  echo "      \"size_human\": \"$sz_h\","
+  echo "      \"needs_sudo\": $needs_sudo,"
+  echo "      \"in_total\": $in_total,"
+  echo "      \"risk\": \"${CAT_RISKS[$i]}\","
+  echo "      \"recovery\": \"$(cat_recovery "$id")\""
+
+  case "$id" in
+    app_leftovers)
+      echo "      ,\"subitems\": ["
+      scan_app_leftovers_subitems_json
+      echo ""
+      echo "      ]"
+      ;;
+    developer)
+      echo "      ,\"subitems\": ["
+      scan_developer_subitems_json
+      echo ""
+      echo "      ]"
+      ;;
+    browser_full)
+      echo "      ,\"subitems\": ["
+      scan_browser_full_subitems_json
+      echo ""
+      echo "      ]"
+      ;;
+    ios_backups)
+      echo "      ,\"subitems\": ["
+      scan_ios_backups_subitems_json
+      echo ""
+      echo "      ]"
+      ;;
+    app_uninstaller)
+      echo "      ,\"subitems\": ["
+      scan_app_uninstaller_subitems_json
+      echo ""
+      echo "      ]"
+      ;;
+    mail_downloads)
+      echo "      ,\"subitems\": ["
+      scan_mail_downloads_subitems_json
+      echo "      ]"
+      ;;
+    project_artifacts)
+      echo "      ,\"subitems\": ["
+      scan_project_artifacts_subitems_json
+      echo ""
+      echo "      ]"
+      ;;
+    installer_artifacts)
+      echo "      ,\"subitems\": ["
+      scan_installer_artifacts_subitems_json
+      echo ""
+      echo "      ]"
+      ;;
+  esac
+
+  echo -n "    }"
+}
+
+do_scan_category_json() {
+  local id="${1:-}"
+  local i; i=$(cat_index_by_id "$id")
+  if [ "$i" -lt 0 ]; then
+    printf '{"success":false,"error":"unknown category id: %s"}\n' \
+      "$(json_escape_str "$id")"
+    return 1
+  fi
+
+  SUDO_AVAILABLE=false
+  local scan_fn; scan_fn=$(cat_field "$i" scan_fn)
+  "$scan_fn" >/dev/null 2>&1
+
+  printf '{"success":true,"plan_version":1,"id":"%s","category":' \
+    "$(json_escape_str "$id")"
+  emit_category_json "$i"
+  printf '}\n'
+}
+
 do_scan_json() {
   SUDO_AVAILABLE=false
   scan_all >/dev/null 2>&1
@@ -3509,59 +2666,11 @@ do_scan_json() {
 ENDJSON
   for i in "${!CAT_IDS[@]}"; do
     local id="${CAT_IDS[$i]}"
-    local sz_h; sz_h=$(format_bytes "${CAT_SIZES[$i]}")
-    local needs_sudo="false"
-    [ "${CAT_NEEDS_SUDO[$i]}" -eq 1 ] && needs_sudo="true"
-    local in_total="false"
-    [ "${CAT_IN_TOTAL[$i]}" -eq 1 ] && in_total="true"
-
-    echo "    \"$id\": {"
-    echo "      \"size_bytes\": ${CAT_SIZES[$i]},"
-    echo "      \"size_human\": \"$sz_h\","
-    echo "      \"needs_sudo\": $needs_sudo,"
-    echo "      \"in_total\": $in_total,"
-    echo "      \"risk\": \"${CAT_RISKS[$i]}\","
-    echo "      \"recovery\": \"$(cat_recovery "$id")\""
-
-    if [ "$id" = "app_leftovers" ]; then
-      echo "      ,\"subitems\": ["
-      scan_app_leftovers_subitems_json
-      echo ""
-      echo "      ]"
-    elif [ "$id" = "developer" ]; then
-      echo "      ,\"subitems\": ["
-      scan_developer_subitems_json
-      echo ""
-      echo "      ]"
-    elif [ "$id" = "browser_full" ]; then
-      echo "      ,\"subitems\": ["
-      scan_browser_full_subitems_json
-      echo ""
-      echo "      ]"
-    elif [ "$id" = "ios_backups" ]; then
-      echo "      ,\"subitems\": ["
-      scan_ios_backups_subitems_json
-      echo ""
-      echo "      ]"
-    elif [ "$id" = "app_uninstaller" ]; then
-      echo "      ,\"subitems\": ["
-      scan_app_uninstaller_subitems_json
-      echo ""
-      echo "      ]"
-    elif [ "$id" = "mail_downloads" ]; then
-      echo "      ,\"subitems\": ["
-      scan_mail_downloads_subitems_json
-      echo "      ]"
-    elif [ "$id" = "project_artifacts" ]; then
-      echo "      ,\"subitems\": ["
-      scan_project_artifacts_subitems_json
-      echo ""
-      echo "      ]"
-    fi
-    
     local comma=","
     [ "$i" -eq $((${#CAT_IDS[@]} - 1)) ] && comma=""
-    echo "    }${comma}"
+    echo -n "    \"$id\": "
+    emit_category_json "$i"
+    echo "$comma"
   done
   cat <<ENDJSON
   },
@@ -3573,7 +2682,6 @@ ENDJSON
 }
 ENDJSON
 }
-
 # ─── JSON Clean ──────────────────────────────────────────────────────────────
 
 do_clean_json() {
@@ -3739,6 +2847,7 @@ do_status_json() {
   cat <<ENDJSON
 {
   "status": "ready",
+  "version": "$VERSION",
   "disk_free": "$(get_free_disk)",
   "macos_version": "$(sw_vers -productVersion 2>/dev/null || echo 'unknown')",
   "user": "$(whoami)"
@@ -3796,6 +2905,12 @@ main() {
         do_scan_json
         exit 0
         ;;
+      --scan-category-json)
+        i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --scan-category-json"; exit 1; }
+        do_scan_category_json "${args[$i]}"
+        exit $?
+        ;;
       --status-json)
         do_status_json
         exit 0
@@ -3803,6 +2918,10 @@ main() {
       --remove-user-data)
         do_remove_user_data
         exit $?
+        ;;
+      --version)
+        echo "$VERSION"
+        exit 0
         ;;
       --history)
         do_history
@@ -3878,6 +2997,16 @@ main() {
         [ $i -ge ${#args[@]} ] && { echo "Missing value for --project-artifact-identities"; exit 1; }
         PROJECT_ARTIFACT_IDENTITIES="${args[$i]}"
         ;;
+      --installer-artifact-sub)
+        i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --installer-artifact-sub"; exit 1; }
+        INSTALLER_ARTIFACT_CLEAN="${args[$i]}"
+        ;;
+      --installer-artifact-identities)
+        i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --installer-artifact-identities"; exit 1; }
+        INSTALLER_ARTIFACT_IDENTITIES="${args[$i]}"
+        ;;
       --__noop)
         # Test hook: allow `source clean_mac.sh --__noop` to load functions
         # without executing the interactive flow. No-op.
@@ -3929,6 +3058,7 @@ main() {
         echo ""
         echo -e "${BOLD}Web API:${NC}"
         echo "  --scan-json              Scan results as JSON"
+        echo "  --scan-category-json id  Scan one stable category as JSON"
         echo "  --clean-json 1,3,7       Clean specified categories, return JSON"
         echo "  --clean-ids-json id,id   Clean stable category ids, return JSON"
         echo "  --app-leftovers 'd1,d2'  Leftover folder names to delete"
@@ -3940,7 +3070,10 @@ main() {
         echo "  --app-uninstaller-bundle-id <id> Bundle id captured before removal"
         echo "  --project-artifact-sub 'p1,p2' Project artifact paths to delete"
         echo "  --project-artifact-identities 'i1,i2' Scan identities paired with project artifact paths"
+        echo "  --installer-artifact-sub 'p1,p2' Explicit Downloads installer paths"
+        echo "  --installer-artifact-identities 'i1,i2' Scan identities paired with installer paths"
         echo "  --status-json            System status as JSON"
+        echo "  --version                Print the installed version"
         echo "  --remove-user-data       Move schedule, history, forecasts, and undo metadata to Trash"
         echo "  --thin-snapshots-json    Thin local TM snapshots, return JSON"
         echo "  --ops-json               List restorable operations as JSON"
@@ -3959,7 +3092,7 @@ main() {
         echo "  APPLE_CLEANUP_DRYRUN     Set to 1 to preview only (deletes nothing)"
         echo "  APPLE_CLEANUP_EXCLUDE    Colon-separated paths/globs to protect"
         echo ""
-        echo "Note: Downloads folder is never touched."
+        echo "Note: Downloads is protected except for explicitly selected, identity-verified DMG/PKG/ISO files."
         echo ""
         exit 0
         ;;

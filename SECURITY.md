@@ -10,7 +10,9 @@ public API rather than an implementation detail.
   supported filesystem scope.
 - The physical parent of a target must stay in the same scope as its logical
   path. Symlinked directory roots are not traversed for content deletion.
-- Downloads and critical system roots are never cleanup targets.
+- Critical system roots are never cleanup targets. Downloads is protected
+  except for direct `.dmg`, `.pkg`, and `.iso` files that the user selects
+  individually from a fresh scan and whose filesystem identity still matches.
 - Dry-run executes no file or owner-command mutation.
 - User data is Trash-first unless the category is explicitly documented as
   permanent, such as emptying Trash or system cache cleanup.
@@ -34,9 +36,11 @@ smallest reproduction possible using an isolated temporary HOME.
 Run:
 
 ```bash
-bash -n clean_mac.sh
+for file in clean_mac.sh lib/core/*.sh lib/categories/*.sh; do bash -n "$file"; done
+shellcheck clean_mac.sh lib/core/*.sh lib/categories/*.sh
 python3 -m pytest
 node --test tests/*.mjs
+node --check web/script.js
 ```
 
 Security contract tests additionally reject recursive quarantine clearing,

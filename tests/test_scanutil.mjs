@@ -131,3 +131,16 @@ test('buildCleanPayload preserves project artifact scan identity', () => {
     identity: '1:2:3:4:5:6:package.json',
   }]);
 });
+
+test('buildCleanPayload preserves installer file scan identity', () => {
+  const row = {
+    rowId: 'installer_artifacts::/Users/x/Downloads/Tool.dmg',
+    catKey: 'installer_artifacts', id: '/Users/x/Downloads/Tool.dmg',
+    identity: '1:2:100:1234',
+  };
+  const p = ScanUtil.buildCleanPayload([row], { installer_artifacts: 18 });
+  assert.deepEqual(p.categories, ['installer_artifacts']);
+  assert.deepEqual(p.installer_artifacts_selected, [{
+    path: '/Users/x/Downloads/Tool.dmg', identity: '1:2:100:1234',
+  }]);
+});

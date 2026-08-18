@@ -108,6 +108,12 @@
       desc: 'Old node_modules, target, .build, build…',
       icon: 'i-wrench', color: '#16a34a', defaultChecked: false, danger: false, tags: [],
     },
+    {
+      key: 'installer_artifacts', index: 18, name: 'Installer Files',
+      desc: 'Large DMG, PKG and ISO files in Downloads',
+      icon: 'i-download', color: '#0ea5e9', defaultChecked: false, danger: false,
+      tags: [{ icon: 'i-check', label: 'explicit selection', style: 'amber' }],
+    },
   ];
 
   const KEY_BY_INDEX = Object.fromEntries(CATEGORIES.map((c) => [c.index, c.key]));
@@ -144,6 +150,7 @@
     treemapSection: $('#treemapSection'),
 
     btnScan:       $('#btnScan'),
+    btnCancelScan: $('#btnCancelScan'),
     btnClean:      $('#btnClean'),
     dryRunToggle:  $('#dryRunToggle'),
     btnSelectAll:  $('#btnSelectAll'),
@@ -331,7 +338,10 @@
 
   function getSelectedIndices() {
     return el.cats
-      .filter((c) => $('input[type="checkbox"]', c).checked)
+      .filter((c) => {
+        const checkbox = $('input[type="checkbox"]', c);
+        return checkbox.checked && !checkbox.disabled;
+      })
       .map((c) => parseInt(c.dataset.index, 10));
   }
 
@@ -345,9 +355,9 @@
     return out;
   }
 
-  function getSelectedProjectArtifacts() {
+  function getSelectedIdentityItems(categoryKey) {
     const out = [];
-    const container = $('.subitems[data-cat="project_artifacts"]');
+    const container = $(`.subitems[data-cat="${categoryKey}"]`);
     if (!container) return out;
     $$('input[type="checkbox"]', container).forEach((cb) => {
       if (cb.checked && cb.dataset.identity) {
@@ -480,6 +490,10 @@
     if (isLoading) return;
     isLoading = true;
     setLoading(el.btnScan, true);
+    if (el.btnCancelScan) {
+      el.btnCancelScan.hidden = false;
+      el.btnCancelScan.disabled = false;
+    }
     el.btnClean.disabled = true;
     el.resultsPanel.hidden = true;
     el.hero.setAttribute('data-state', 'scanning');
@@ -507,6 +521,34 @@
       const scan = data.scan || {};
       const totalBytes = window.ScanUtil.computeTotalBytes(data);
       const maxBytes = Math.max(...Object.values(scan).map((s) => s.size_bytes || 0), 1);
+
+      // A failed category is never left selectable with a stale/unknown size.
+      // Successful categories remain usable when the server returns a partial
+      // scan, so one slow cache does not block all cleanup work.
+      el.cats.forEach((card) => {
+        const key = card.dataset.category;
+        const available = Object.prototype.hasOwnProperty.call(scan, key);
+        const cb = $('input[type="checkbox"]', card);
+        cb.disabled = !available;
+        card.classList.toggle('cat-unavailable', !available);
+        if (!available) {
+          cb.checked = false;
+          card.classList.remove('selected');
+          const sizeEl = $(`.cat-size[data-size="${key}"]`, card);
+          if (sizeEl) {
+            sizeEl.textContent = 'Unavailable';
+            sizeEl.dataset.bytes = '0';
+          }
+          const riskEl = $(`.cat-risk[data-risk="${key}"]`, card);
+          if (riskEl) {
+            riskEl.textContent = data.failed_categories?.[key] === 'timeout'
+              ? 'Timed out' : 'Not scanned';
+            riskEl.className = 'cat-risk risk-caution';
+          }
+          const fill = $('.cat-bar-fill', card);
+          if (fill) fill.style.width = '0';
+        }
+      });
 
       // Update each category row
       Object.entries(scan).forEach(([key, info]) => {
@@ -551,19 +593,45 @@
       // Interactive space map
       renderTreemap(scan);
 
-      el.heroEyebrow.textContent = `Scan complete · ${data.total_human || formatBytes(totalBytes)} can be cleaned`;
+      const failedCount = Object.keys(data.failed_categories || {}).length;
+      el.heroEyebrow.textContent = data.cancelled
+        ? `Scan cancelled · ${Object.keys(scan).length} categories completed`
+        : data.partial
+        ? `Partial scan · ${failedCount} unavailable · ${data.total_human || formatBytes(totalBytes)} found`
+        : `Scan complete · ${data.total_human || formatBytes(totalBytes)} can be cleaned`;
       el.hero.setAttribute('data-state', 'scanned');
-      termLog(`Scan complete — total ${data.total_human || formatBytes(totalBytes)}`, 'success');
+      termLog(
+        data.cancelled
+          ? `Scan cancelled — ${Object.keys(scan).length} completed results remain usable.`
+          : data.partial
+          ? `Partial scan — ${failedCount} categories unavailable; completed results remain usable.`
+          : `Scan complete — total ${data.total_human || formatBytes(totalBytes)}`,
+        data.partial || data.cancelled ? 'warning' : 'success'
+      );
 
       window.AppAnim?.afterScan?.();
-      el.btnClean.disabled = false;
+      el.btnClean.disabled = Object.keys(scan).length === 0;
     } catch (err) {
       termLog(`Scan error: ${err.message}`, 'error');
       el.hero.setAttribute('data-state', 'idle');
       el.heroEyebrow.textContent = 'Server not running · Scan failed';
     } finally {
       setLoading(el.btnScan, false);
+      if (el.btnCancelScan) el.btnCancelScan.hidden = true;
       isLoading = false;
+    }
+  }
+
+  async function handleCancelScan() {
+    if (!isLoading || !el.btnCancelScan) return;
+    el.btnCancelScan.disabled = true;
+    termLog('Cancelling scan…', 'warning');
+    try {
+      const data = await apiFetch('/api/scan-cancel', { method: 'POST' });
+      if (!data.cancel_requested) termLog('Scan already finished.', 'info');
+    } catch (err) {
+      termLog(`Could not cancel scan: ${err.message}`, 'error');
+      el.btnCancelScan.disabled = false;
     }
   }
 
@@ -714,6 +782,8 @@
         const ageLabel = sub.is_orphaned && sub.days_since != null
           ? ` · ${sub.days_since}d` : '';
         badge = `<span class="subitem-badge ${cls}">${escapeHtml(typeLabel)}${ageLabel}</span>`;
+      } else if (key === 'installer_artifacts') {
+        badge = `<span class="subitem-badge installed">${escapeHtml(sub.type || 'installer')}</span>`;
       }
 
       // Secondary line: static cache description, plus a per-project breakdown
@@ -756,6 +826,12 @@
       }, sig);
     });
     parentCb.addEventListener('change', () => {
+      if (key === 'installer_artifacts') {
+        // Downloads never has a category-level "delete all" shortcut. Each
+        // candidate must be selected in the expanded list (or Files view).
+        parentCb.checked = subCbs.some((scb) => scb.checked);
+        return;
+      }
       subCbs.forEach((scb) => (scb.checked = parentCb.checked));
     }, sig);
     const anyChecked = subCbs.some((cb) => cb.checked);
@@ -814,7 +890,8 @@
         developer_selected: getSelectedSubitems('developer'),
         ios_backups_selected: getSelectedSubitems('ios_backups'),
         app_uninstaller_selected: getSelectedSubitems('app_uninstaller'),
-        project_artifacts_selected: getSelectedProjectArtifacts(),
+        project_artifacts_selected: getSelectedIdentityItems('project_artifacts'),
+        installer_artifacts_selected: getSelectedIdentityItems('installer_artifacts'),
       };
       const data = await apiFetch('/api/clean', {
         method: 'POST',
@@ -1157,6 +1234,7 @@
      Bindings
      ────────────────────────────────────────────────────────── */
   el.btnScan.addEventListener('click', handleScan);
+  if (el.btnCancelScan) el.btnCancelScan.addEventListener('click', handleCancelScan);
   el.btnClean.addEventListener('click', handleClean);
   if (el.btnSpotlight) el.btnSpotlight.addEventListener('click', handleSpotlight);
   if (el.btnFlushDns) el.btnFlushDns.addEventListener('click', handleFlushDns);
@@ -1266,6 +1344,7 @@
 
     row.addEventListener('click', (e) => {
       if (e.target.closest('.switch')) return;
+      if (cb.disabled) return;
       const hasSubs = card.querySelector('.subitems');
       if (hasSubs) {
         const willOpen = card.getAttribute('data-open') !== 'true';
@@ -1287,7 +1366,9 @@
 
   el.btnSelectAll.addEventListener('click', () => {
     el.cats.forEach((card) => {
+      if (card.dataset.category === 'installer_artifacts') return;
       const cb = $('input[type="checkbox"]', card);
+      if (cb.disabled) return;
       cb.checked = true;
       card.classList.add('selected');
       $$('.subitems input[type="checkbox"]', card).forEach((s) => (s.checked = true));
@@ -1311,10 +1392,12 @@
   const tabCleanup = $('#tab-cleanup');
   const tabUninstaller = $('#tab-uninstaller');
   const tabFiles = $('#tab-files');
+  const tabHealth = $('#tab-health');
   const tabHistory = $('#tab-history');
   const cleanupTabContent = $('#cleanupTabContent');
   const uninstallerTabContent = $('#uninstallerTabContent');
   const filesTabContent = $('#filesTabContent');
+  const healthTabContent = $('#healthTabContent');
   const historyTabContent = $('#historyTabContent');
   const appsSearch = $('#appsSearch');
 
@@ -1325,6 +1408,7 @@
       cleanup:     [tabCleanup, cleanupTabContent],
       uninstaller: [tabUninstaller, uninstallerTabContent],
       files:       [tabFiles, filesTabContent],
+      health:      [tabHealth, healthTabContent],
       history:     [tabHistory, historyTabContent],
     };
     Object.entries(map).forEach(([id, [btn, content]]) => {
@@ -1338,16 +1422,18 @@
     if (shouldFocus) map[tabId][0].focus();
     if (tabId === 'uninstaller') loadApplications();
     if (tabId === 'files') renderFileList();
+    if (tabId === 'health') loadHealth();
     if (tabId === 'history') { loadOperations(); loadHistory(); }
   }
 
   tabCleanup.addEventListener('click', () => showTab('cleanup'));
   tabUninstaller.addEventListener('click', () => showTab('uninstaller'));
   tabFiles.addEventListener('click', () => showTab('files'));
+  tabHealth.addEventListener('click', () => showTab('health'));
   tabHistory.addEventListener('click', () => showTab('history'));
 
-  const tabOrder = ['cleanup', 'uninstaller', 'files', 'history'];
-  const tabButtons = [tabCleanup, tabUninstaller, tabFiles, tabHistory];
+  const tabOrder = ['cleanup', 'uninstaller', 'files', 'health', 'history'];
+  const tabButtons = [tabCleanup, tabUninstaller, tabFiles, tabHealth, tabHistory];
   document.querySelector('.nav-tabs')?.addEventListener('keydown', (event) => {
     if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home', 'End'].includes(event.key)) return;
     event.preventDefault();
@@ -1359,6 +1445,40 @@
     else next = (next - 1 + tabButtons.length) % tabButtons.length;
     showTab(tabOrder[next], true);
   });
+
+  /* ──────────────────────────────────────────────────────────
+     Read-only system health
+     ────────────────────────────────────────────────────────── */
+  async function loadHealth() {
+    const list = healthTabContent?.querySelector('#healthList');
+    const summary = healthTabContent?.querySelector('#healthSummary');
+    if (!list) return;
+    list.innerHTML = '<p class="muted">Running read-only checks…</p>';
+    try {
+      const data = await apiFetch('/api/health');
+      const counts = data.summary || {};
+      if (summary) {
+        summary.textContent = data.status === 'healthy'
+          ? `${counts.ok || 0} checks passed`
+          : `${counts.warning || 0} checks need attention · no automatic changes made`;
+      }
+      list.innerHTML = (data.checks || []).map((check) => `
+        <div class="health-row">
+          <span class="health-badge health-${escapeAttr(check.status)}">${escapeHtml(check.status)}</span>
+          <span class="health-title">${escapeHtml(check.title)}</span>
+          <span class="health-detail">
+            <span>${escapeHtml(check.detail)}</span>
+            ${check.recommendation ? `<span class="health-recommendation">${escapeHtml(check.recommendation)}</span>` : ''}
+          </span>
+        </div>`).join('') || '<p class="muted">No health checks available.</p>';
+    } catch (err) {
+      if (summary) summary.textContent = 'Health checks unavailable';
+      list.innerHTML = `<p class="muted">${escapeHtml(err.message)}</p>`;
+    }
+  }
+
+  const btnRefreshHealth = $('#btnRefreshHealth');
+  if (btnRefreshHealth) btnRefreshHealth.addEventListener('click', loadHealth);
 
   /* ──────────────────────────────────────────────────────────
      Undo / Restore tab

@@ -182,11 +182,33 @@
         <svg class="ic"><use href="#i-leftover"/></svg>
         <span>Files</span>
       </button>
+      <button class="tab-btn" role="tab" aria-selected="false" aria-controls="healthTabContent" id="tab-health" type="button" tabindex="-1">
+        <svg class="ic"><use href="#i-check"/></svg>
+        <span>Health</span>
+      </button>
       <button class="tab-btn" role="tab" aria-selected="false" aria-controls="historyTabContent" id="tab-history" type="button" tabindex="-1">
         <svg class="ic"><use href="#i-leftover"/></svg>
         <span>History</span>
       </button>
     </nav>
+
+    <!-- ═══ Read-only Health Tab Content ═══ -->
+    <div id="healthTabContent" role="tabpanel" aria-labelledby="tab-health" tabindex="0" hidden>
+      <section class="section">
+        <div class="section-head">
+          <div class="section-titleblock">
+            <h2 class="section-title">System Health</h2>
+            <span class="section-sub" id="healthSummary">Read-only safety and compatibility checks</span>
+          </div>
+          <div class="section-tools">
+            <button class="btn btn-sm" id="btnRefreshHealth" type="button">Refresh</button>
+          </div>
+        </div>
+        <div id="healthList" class="health-list" aria-live="polite">
+          <p class="muted">Open this tab to run checks.</p>
+        </div>
+      </section>
+    </div>
 
     <!-- ═══ History Tab Content ═══ -->
     <div id="historyTabContent" role="tabpanel" aria-labelledby="tab-history" tabindex="0" hidden>
@@ -244,6 +266,10 @@
             <svg class="ic"><use href="#i-search"/></svg>
             <span class="btn-text">Scan</span>
             <span class="btn-kbd" aria-hidden="true">⌘S</span>
+          </button>
+          <button class="btn" id="btnCancelScan" type="button" hidden>
+            <svg class="ic"><use href="#i-x"/></svg>
+            <span class="btn-text">Cancel scan</span>
           </button>
           <button class="btn btn-accent" id="btnClean" type="button" disabled>
             <span class="spinner" aria-hidden="true"></span>
