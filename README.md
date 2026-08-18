@@ -41,6 +41,13 @@ Full Disk Access**.
 keeps runtime history and logs in `~/.cache/apple-cleanup`. If weekly cleanup
 was enabled, its plist in `~/Library/LaunchAgents/` is also kept.
 
+To remove those user-owned files safely, run this before uninstalling:
+
+```bash
+apple-cleanup-cli --remove-user-data
+brew uninstall apple-cleanup
+```
+
 ---
 
 ## 🖱️ Easy Setup & Usage (No technical knowledge needed)
@@ -56,15 +63,15 @@ You don't need to know the Terminal. Three steps:
 The dashboard opens automatically in your browser at `http://localhost:8080`. 🎉
 
 > **Why "right-click → Open" the first time?** macOS locks files downloaded from
-> the internet for security. Right-click → "Open" clears that lock once, safely.
-> After the first launch, a **plain double-click** is enough — the file clears
-> its own permissions and the macOS quarantine for you, with nothing to type in
-> the Terminal.
+> the internet for security. Right-click → "Open" approves the launcher once.
+> After the first launch, a **plain double-click** is enough. The launcher only
+> clears quarantine from itself and the internal launcher; it never changes the
+> quarantine state of the whole project directory.
 >
 > To quit, just close the black Terminal window that opened.
 
-> **Note:** The tool only requires Python 3, which ships with modern macOS. If
-> it's missing, the Terminal window points you to `xcode-select --install`.
+> **Note:** The dashboard requires Python 3. Install it through Homebrew or the
+> Command Line Tools if `python3` is not already available.
 
 ---
 
@@ -130,18 +137,18 @@ The script targets a wide array of system and user items, categorized by safety 
 | 2 | 🖥️ System Caches | `/Library/Caches/*` | requires `sudo` |
 | 3 | 📂 App Leftovers | `~/Library/Application Support/` | interactive selection |
 | 4 | 📋 Logs | `~/Library/Logs/*`, `/Library/Logs/*` | Safe |
-| 5 | 🗃️ Temporary Files | `$TMPDIR`, user var/folders | Safe |
-| 6 | 🛠️ Developer | Xcode DerivedData | interactive selection |
-| 7 | 🗑️ Trash | `~/.Trash/*` | Safe |
+| 5 | 🗃️ Temporary Files | `$TMPDIR`, user var/folders | permanent; opt-in in dashboard |
+| 6 | 🛠️ Developer | Xcode and tool caches/actions | mixed recovery; explicit sub-item selection |
+| 7 | 🗑️ Trash | `~/.Trash/*` | permanent; opt-in |
 | 8 | 🌐 Browser Cache | `~/Library/Caches` for Safari, Chrome, etc. | Safe |
 | 9 | ⚠️ Browser Full Data | Complete browser profiles (cookies, history) | **Danger** (requires opt-in) |
 | 10| 📱 iOS Backups | `~/Library/MobileSync/Backup` | interactive selection |
 | 11| 🗑️ App Uninstaller | Remove apps & associated leftover files | interactive selection |
-| 12| 📨 Mail Downloads | Mail attachment downloads cache | Safe |
+| 12| 📨 Mail Downloads | Mail attachment downloads cache | Trash-first; opt-in |
 | 13| 🩺 Diagnostic Reports| `~/Library/Logs/DiagnosticReports` | Safe |
 | 14| 🖼️ QuickLook Cache | `qlmanage` thumbnail cache | Safe |
 | 15| 💾 Saved App State | `~/Library/Saved Application State` | Caution |
-| 16| 💽 Other Trashes | `/Volumes/*/.Trashes` | Safe |
+| 16| 💽 Other Trashes | `/Volumes/*/.Trashes` | permanent; opt-in |
 | 17| 🧱 Project Artifacts | Stale `node_modules`, `target`, `.build`, `build`, `vendor`, `.dart_tool`, `.terraform` in code folders | interactive selection |
 
 ---
@@ -155,6 +162,10 @@ apple-cleanup/
 ├── CLICK_TO_START.command    # Double-click launcher (fixes perms/quarantine)
 ├── Internal_Launcher.command # Background: runs the server
 ├── clean_mac.sh              # Main cleanup script
+├── SECURITY.md               # Public deletion-safety contract
+├── THIRD_PARTY_NOTICES.md    # Vendored component notices
+├── docs/                     # Architecture and security design
+├── tests/                    # Python and Node regression/security tests
 ├── web/
 │   ├── server.py             # Python web server for the dashboard
 │   ├── index.html            # Dashboard UI
@@ -176,8 +187,11 @@ The web dashboard invokes `clean_mac.sh` in JSON mode for programmatic control:
 # Get scan results
 bash clean_mac.sh --scan-json
 
-# Clean specific categories (comma-separated indices)
-bash clean_mac.sh --clean-json 1,4,7
+# Clean stable category IDs (preferred)
+bash clean_mac.sh --clean-ids-json user_cache,logs
+
+# Legacy numeric form remains supported for CLI compatibility
+bash clean_mac.sh --clean-json 1,4
 
 # Get system status
 bash clean_mac.sh --status-json
@@ -198,13 +212,15 @@ tab (loopback + session-token protected, like every other write endpoint):
 
 ## ⚠️ Safety Notes
 
-- The script only removes caches, logs, and temporary files by default.
+- The dashboard preselects only conservative cache/log categories. Permanent,
+  developer, mail, Trash and external-volume actions require explicit opt-in.
 - The app uninstaller moves app bundles and exact associated files to Trash;
   Homebrew casks use `brew uninstall --cask --zap` first.
 - macOS will recreate many of these files as needed.
 - The `Downloads` folder is not touched.
 - System Cache cleanup requires `sudo` (terminal mode).
-- The web dashboard skips categories that require `sudo` unless explicitly enabled.
+- The web dashboard skips categories that require `sudo`; run terminal mode for
+  an explicitly authorized system-cache cleanup.
 - **Dry-run preview:** set `APPLE_CLEANUP_DRYRUN=1` (or enable *Preview* in the
   dashboard) to see exactly what would be removed — nothing is deleted.
 - **Exclusion list:** set `APPLE_CLEANUP_EXCLUDE` to a colon-separated list of
@@ -223,9 +239,16 @@ The dashboard exposes an API that can delete files, so it is locked down:
   changed, symlinked, out-of-scope, or protected app bundles.
 - Serializes destructive operations so cleanup, restore, and uninstall cannot
   race one another.
+- Uses stable category IDs, versioned scan plans, scan-time artifact identities,
+  physical-parent validation and live database guards.
+- Terminates the complete subprocess group when a scan or cleanup times out.
 
 ---
 
 ## 📄 License
+
+Project-authored code is MIT-licensed. Vendored files retain their own license
+headers; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Mole was used only
+as an architectural reference and no GPLv3 source or branding is incorporated.
 
 MIT License — see [LICENSE](LICENSE) for details.

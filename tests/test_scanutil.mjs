@@ -113,8 +113,21 @@ test('buildCleanPayload groups ids by category with indices', () => {
   );
   const indexByKey = { app_leftovers: 3, browser_full: 9 };
   const p = ScanUtil.buildCleanPayload(rows, indexByKey);
-  assert.deepEqual(p.categories.sort(), [3, 9]);
+  assert.deepEqual(p.categories.sort(), ['app_leftovers', 'browser_full']);
   assert.deepEqual(p.app_leftovers_selected, ['OldApp']);
   assert.deepEqual(p.browser_full_selected, ['chrome']);
   assert.deepEqual(p.developer_selected, []);
+});
+
+test('buildCleanPayload preserves project artifact scan identity', () => {
+  const rows = [{
+    rowId: 'project_artifacts::/Users/x/app/node_modules',
+    catKey: 'project_artifacts', id: '/Users/x/app/node_modules',
+    identity: '1:2:3:4:5:6:package.json',
+  }];
+  const p = ScanUtil.buildCleanPayload(rows, { project_artifacts: 17 });
+  assert.deepEqual(p.project_artifacts_selected, [{
+    path: '/Users/x/app/node_modules',
+    identity: '1:2:3:4:5:6:package.json',
+  }]);
 });

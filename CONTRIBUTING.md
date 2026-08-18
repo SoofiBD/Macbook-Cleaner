@@ -24,6 +24,11 @@ mind for every change:
   (`http.server`, `json`, etc.). No `pip install`, no Flask/FastAPI/Django.
 - **Cleanup logic = portable Bash.** `clean_mac.sh` targets macOS and must pass
   ShellCheck. Guard destructive operations and never touch protected system paths.
+- **One destructive boundary.** File mutations must terminate in `safe_rm` or
+  `safe_rm_contents`; owner commands must use `run_mutating_action`. New paths
+  need adversarial traversal, symlink, dry-run and legitimate-control tests.
+- **Stable protocol IDs.** Category display order is not an API. Web requests use
+  stable category IDs and project deletions retain the scan-time identity.
 
 If you think a change genuinely needs a dependency, open an issue to discuss it
 **before** writing code. The default answer is "vendor it locally or do without."
@@ -36,6 +41,8 @@ If you think a change genuinely needs a dependency, open an issue to discuss it
 | `web/server.py` | Local Python dashboard server |
 | `web/index.html`, `style.css`, `script.js` | Dashboard UI (vanilla) |
 | `web/vendor/` | Locally vendored GSAP — no CDN |
+| `docs/` | Architecture and security design |
+| `SECURITY.md` | Supported deletion-safety contract |
 | `tests/` | Python `pytest` + Node `node:test` suites |
 
 ## Getting Started

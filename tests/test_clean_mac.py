@@ -31,9 +31,11 @@ def test_scan_json_has_required_keys(tmp_path):
     assert data["success"] is True
     assert "scan" in data
     assert "total_bytes" in data
+    assert data["plan_version"] == 1
     # Her kategori size_bytes alanı taşımalı
     for cat_id, info in data["scan"].items():
         assert "size_bytes" in info, cat_id
+        assert info["recovery"] in {"trash", "permanent", "mixed"}, cat_id
 
 
 def test_scan_json_includes_risk_per_category(tmp_path):
@@ -121,6 +123,258 @@ def test_dry_run_previews_without_deleting(tmp_path):
     assert blob.exists(), "dry-run must not delete files"
 
 
+def _write_mutation_probe(path: Path, tool: str, marker: Path) -> None:
+    script = f'''#!/bin/sh
+case "$*" in
+  "system prune -a -f --volumes"|"cleanup -s"|\
+  "simctl delete unavailable"|"simctl shutdown all"|"simctl erase all")
+    printf '%s\\n' {json.dumps(tool)} >> {json.dumps(str(marker))}
+    ;;
+esac
+case "{tool}:$*" in
+  "brew:--cache") printf '%s\\n' {json.dumps(str(path.parent / "brew-cache"))} ;;
+esac
+exit 0
+'''
+    path.write_text(script)
+    path.chmod(0o755)
+
+
+def test_developer_owner_commands_obey_dry_run(tmp_path):
+    marker = tmp_path / "mutations.log"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    for tool in ("docker", "brew", "xcrun"):
+        _write_mutation_probe(bin_dir / tool, tool, marker)
+
+    env = dict(
+        os.environ,
+        HOME=str(tmp_path),
+        PATH=f"{bin_dir}:{os.environ.get('PATH', '')}",
+        APPLE_CLEANUP_DRYRUN="1",
+    )
+    out = subprocess.run(
+        ["bash", str(SCRIPT), "--clean-json", "6", "--developer-sub",
+         "docker_prune,brew_cleanup,simctl_unavailable,simulator_devices"],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    data = json.loads(out.stdout)
+    assert data["dry_run"] is True
+    assert not marker.exists(), "dry-run invoked a mutating owner command"
+
+
+def test_force_rm_requires_explicit_isolated_test_mode(tmp_path):
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_FORCE_RM="1")
+    out = subprocess.run(
+        ["bash", "-c", f'source "{SCRIPT}" --__noop; _should_force_rm 0 0'],
+        env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert out.returncode != 0, "FORCE_RM alone must not enable permanent deletion"
+
+    env["APPLE_CLEANUP_TEST_MODE"] = "1"
+    out = subprocess.run(
+        ["bash", "-c", f'source "{SCRIPT}" --__noop; _should_force_rm 0 0'],
+        env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert out.returncode == 0, out.stderr
+
+
+def _validate_path(home: Path, path: str, mode="leaf", category=""):
+    env = dict(os.environ, HOME=str(home), APPLE_CLEANUP_NO_OPLOG="1")
+    command = (
+        f'source "{SCRIPT}" --__noop; '
+        f'_CURRENT_CATEGORY={json.dumps(category)}; '
+        f'_validate_removal_path {json.dumps(path)} {json.dumps(mode)}'
+    )
+    return subprocess.run(
+        ["bash", "-c", command], env=env,
+        capture_output=True, text=True, timeout=10,
+    )
+
+
+def test_removal_validator_rejects_critical_and_malformed_paths(tmp_path):
+    for path in (
+        "relative/path",
+        "/",
+        str(tmp_path),
+        str(tmp_path / "Downloads"),
+        str(tmp_path / "Library/../Downloads/file"),
+        str(tmp_path / "Library/Caches/bad\nname"),
+        "/Library/Preferences/com.example.plist",
+    ):
+        result = _validate_path(tmp_path, path)
+        assert result.returncode != 0, path
+
+
+def test_removal_validator_rejects_ancestor_symlink_scope_escape(tmp_path):
+    outside = tmp_path.parent / f"{tmp_path.name}-outside"
+    outside.mkdir()
+    victim = outside / "victim"
+    victim.mkdir()
+    link = tmp_path / "Library/Caches/escape"
+    link.parent.mkdir(parents=True)
+    link.symlink_to(outside, target_is_directory=True)
+
+    escaped = link / "victim"
+    result = _validate_path(tmp_path, str(escaped))
+    assert result.returncode != 0
+    assert victim.exists()
+
+
+def test_removal_validator_allows_ordinary_home_leaf(tmp_path):
+    victim = tmp_path / "Library/Caches/com.example.app"
+    victim.mkdir(parents=True)
+    result = _validate_path(tmp_path, str(victim))
+    assert result.returncode == 0, result.stderr
+
+
+def test_removal_validator_rejects_symlinked_contents_root(tmp_path):
+    target = tmp_path / "Library/Caches/real"
+    target.mkdir(parents=True)
+    link = tmp_path / "Library/Caches/link"
+    link.symlink_to(target, target_is_directory=True)
+    result = _validate_path(tmp_path, str(link), mode="contents")
+    assert result.returncode != 0
+
+
+def _project_identity(home: Path, artifact: Path) -> str:
+    env = dict(os.environ, HOME=str(home), APPLE_CLEANUP_NO_OPLOG="1")
+    out = subprocess.run(
+        ["bash", "-c",
+         f'source "{SCRIPT}" --__noop; '
+         f'_project_artifact_identity {json.dumps(str(artifact))}'],
+        env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert out.returncode == 0, out.stderr
+    return out.stdout.strip()
+
+
+def test_project_artifact_identity_rejects_replaced_target(tmp_path):
+    project = tmp_path / "Projects/app"
+    artifact = project / "node_modules"
+    artifact.mkdir(parents=True)
+    (project / "package.json").write_text("{}")
+    (artifact / "old.txt").write_text("old")
+    identity = _project_identity(tmp_path, artifact)
+
+    artifact.rename(project / "node_modules.old")
+    artifact.mkdir()
+    (artifact / "new.txt").write_text("new")
+
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_NO_OPLOG="1")
+    command = f'''
+source "{SCRIPT}" --__noop
+scan_all() {{ :; }}
+PROJECT_ARTIFACT_CLEAN={json.dumps(str(artifact))}
+PROJECT_ARTIFACT_IDENTITIES={json.dumps(identity)}
+do_clean_json 17
+'''
+    out = subprocess.run(
+        ["bash", "-c", command], env=env,
+        capture_output=True, text=True, timeout=30,
+    )
+    assert out.returncode == 0, out.stderr
+    data = json.loads(out.stdout)
+    assert data["success"] is False
+    assert artifact.exists()
+    assert (artifact / "new.txt").exists()
+
+
+def test_project_artifact_identity_allows_unchanged_target(tmp_path):
+    project = tmp_path / "Projects/app"
+    artifact = project / "node_modules"
+    artifact.mkdir(parents=True)
+    (project / "package.json").write_text("{}")
+    (artifact / "payload").write_text("data")
+    identity = _project_identity(tmp_path, artifact)
+
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_NO_OPLOG="1")
+    trash = tmp_path / ".Trash"
+    command = f'''
+source "{SCRIPT}" --__noop
+scan_all() {{ :; }}
+_trash_item() {{ mkdir -p {json.dumps(str(trash))}; mv "$1" {json.dumps(str(trash))}/artifact; echo {json.dumps(str(trash))}/artifact; }}
+PROJECT_ARTIFACT_CLEAN={json.dumps(str(artifact))}
+PROJECT_ARTIFACT_IDENTITIES={json.dumps(identity)}
+do_clean_json 17
+'''
+    out = subprocess.run(
+        ["bash", "-c", command], env=env,
+        capture_output=True, text=True, timeout=30,
+    )
+    assert out.returncode == 0, out.stderr
+    data = json.loads(out.stdout)
+    assert data["success"] is True, data
+    assert not artifact.exists()
+    assert (trash / "artifact/payload").exists()
+
+
+def test_live_guard_skips_cache_with_open_files(tmp_path):
+    target = tmp_path / "Library/Caches/com.example.LiveApp"
+    target.mkdir(parents=True)
+    payload = target / "state.sqlite"
+    payload.write_text("database")
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_NO_OPLOG="1")
+    command = f'''
+source "{SCRIPT}" --__noop
+_path_owner_is_running() {{ return 1; }}
+_path_has_open_files() {{ return 0; }}
+safe_rm_contents {json.dumps(str(target))} "Live cache"
+printf '\\nWARNINGS=%s\\n' "${{#CLEAN_WARNINGS[@]}}"
+'''
+    out = subprocess.run(
+        ["bash", "-c", command], env=env,
+        capture_output=True, text=True, timeout=10,
+    )
+    assert out.returncode == 0, out.stderr
+    assert payload.exists()
+    assert "WARNINGS=1" in out.stdout
+
+
+def test_live_guard_fails_closed_for_database_when_lsof_unavailable(tmp_path):
+    target = tmp_path / "Library/Caches/com.example.DatabaseApp"
+    target.mkdir(parents=True)
+    payload = target / "state.db-wal"
+    payload.write_text("wal")
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_NO_OPLOG="1")
+    command = f'''
+source "{SCRIPT}" --__noop
+_path_owner_is_running() {{ return 1; }}
+_path_has_open_files() {{ return 2; }}
+safe_rm_contents {json.dumps(str(target))} "Database cache"
+'''
+    out = subprocess.run(
+        ["bash", "-c", command], env=env,
+        capture_output=True, text=True, timeout=10,
+    )
+    assert out.returncode == 0, out.stderr
+    assert payload.exists()
+
+
+def test_live_guard_allows_closed_cache(tmp_path):
+    target = tmp_path / "Library/Caches/com.example.ClosedApp"
+    target.mkdir(parents=True)
+    payload = target / "cache.bin"
+    payload.write_text("cache")
+    trash = tmp_path / ".Trash"
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_NO_OPLOG="1")
+    command = f'''
+source "{SCRIPT}" --__noop
+_path_owner_is_running() {{ return 1; }}
+_path_has_open_files() {{ return 1; }}
+_trash_item() {{ mkdir -p {json.dumps(str(trash))}; mv "$1" {json.dumps(str(trash))}/item; echo {json.dumps(str(trash))}/item; }}
+safe_rm_contents {json.dumps(str(target))} "Closed cache"
+'''
+    out = subprocess.run(
+        ["bash", "-c", command], env=env,
+        capture_output=True, text=True, timeout=10,
+    )
+    assert out.returncode == 0, out.stderr
+    assert not payload.exists()
+    assert (trash / "item").exists()
+
+
 def test_clean_json_reports_dry_run_flag(tmp_path):
     data = run_clean(tmp_path, "4")  # normal run
     assert data["dry_run"] is False
@@ -133,6 +387,7 @@ def test_exclusion_list_protects_path(tmp_path):
     make_dir_with_bytes(keep, kb=512)
     make_dir_with_bytes(drop, kb=512)
     env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_FORCE_RM="1",
+               APPLE_CLEANUP_TEST_MODE="1",
                APPLE_CLEANUP_EXCLUDE=str(keep))
     out = subprocess.run(
         ["bash", str(SCRIPT), "--clean-json", "1"],
@@ -152,7 +407,8 @@ def test_app_uninstaller_unknown_app_is_safe(tmp_path):
     keep = tmp_path / "Library/Containers/keepme"
     keep.mkdir(parents=True)
     (keep / "data").write_bytes(b"x" * 1024)
-    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_FORCE_RM="1")
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_FORCE_RM="1",
+               APPLE_CLEANUP_TEST_MODE="1")
     out = subprocess.run(
         ["bash", str(SCRIPT), "--clean-json", "11",
          "--app-uninstaller-sub", "ZzNoSuchApp"],
@@ -233,6 +489,35 @@ def test_uninstaller_reports_permission_failure_and_preserves_data(tmp_path):
     assert data["errors"]
     assert app.exists(), "failed bundle removal must be reported"
     assert leftover.exists(), "live app data must remain after bundle failure"
+
+
+def test_uninstaller_preserves_shared_data_when_bundle_sibling_exists(tmp_path):
+    bundle_id = "com.example.SharedApp"
+    app = tmp_path / "Applications/Primary.app"
+    sibling = tmp_path / "Applications/Secondary.app"
+    _write_fake_app(app, bundle_id)
+    _write_fake_app(sibling, bundle_id)
+    shared = tmp_path / f"Library/Caches/{bundle_id}"
+    make_dir_with_bytes(shared, kb=1)
+
+    data = _run_explicit_uninstall(tmp_path, app, bundle_id, trash_ok=True)
+
+    assert data["success"] is True, data
+    assert not app.exists()
+    assert sibling.exists()
+    assert shared.exists(), "data shared by a surviving bundle must be preserved"
+    assert data["details"][0]["status"] == "partial"
+
+
+def test_all_apple_bundle_ids_are_protected(tmp_path):
+    env = dict(os.environ, HOME=str(tmp_path))
+    for bundle_id in ("com.apple.Safari", "com.apple.UnknownFutureApp"):
+        out = subprocess.run(
+            ["bash", "-c", f'source "{SCRIPT}" --__noop; '
+             f'is_protected_app_bundle_id {json.dumps(bundle_id)}'],
+            env=env, capture_output=True, text=True, timeout=10,
+        )
+        assert out.returncode == 0, bundle_id
 
 
 def test_developer_subitems_include_new_caches(tmp_path):
@@ -318,6 +603,57 @@ def test_category_registry_order_is_stable():
     assert ids == expected, ids
 
 
+def test_clean_ids_json_uses_stable_category_ids(tmp_path):
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_DRYRUN="1")
+    out = subprocess.run(
+        ["bash", str(SCRIPT), "--clean-ids-json", "user_cache,logs"],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    data = json.loads(out.stdout)
+    assert [entry["category"] for entry in data["details"]] == [
+        "user_cache", "logs",
+    ]
+
+
+def test_clean_ids_json_rejects_unknown_id(tmp_path):
+    env = dict(os.environ, HOME=str(tmp_path))
+    out = subprocess.run(
+        ["bash", str(SCRIPT), "--clean-ids-json", "user_cache,not-a-category"],
+        env=env, capture_output=True, text=True, timeout=10,
+    )
+    assert out.returncode != 0
+    assert json.loads(out.stdout)["success"] is False
+
+
+def test_remove_user_data_moves_state_and_schedule_to_trash(tmp_path):
+    state = tmp_path / ".cache/apple-cleanup"
+    state.mkdir(parents=True)
+    (state / "usage_history.json").write_text("[]")
+    agent = tmp_path / "Library/LaunchAgents/com.cleanmac.weeklycleanup.plist"
+    agent.parent.mkdir(parents=True)
+    agent.write_text("plist")
+    trash = tmp_path / ".Trash"
+    trash.mkdir()
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_NO_OPLOG="1")
+    command = f'''
+source "{SCRIPT}" --__noop
+confirm() {{ return 0; }}
+launchctl() {{ return 0; }}
+do_remove_user_data
+'''
+    out = subprocess.run(
+        ["bash", "-c", command], env=env,
+        capture_output=True, text=True, timeout=30,
+    )
+    assert out.returncode == 0, out.stderr
+    assert not state.exists()
+    assert not agent.exists()
+    assert any(path.name.startswith("apple-cleanup") for path in trash.iterdir())
+    assert any(path.name.startswith("com.cleanmac.weeklycleanup.plist")
+               for path in trash.iterdir())
+
+
 def test_derived_data_summary_handles_empty_rows(tmp_path):
     # Under set -eo pipefail, derived_data_project_summary must not exit 1
     # when DerivedData has no projects > 1MB.
@@ -357,7 +693,8 @@ def test_partial_direct_cleanup_reports_english_warning_and_keeps_success(tmp_pa
     removable.write_bytes(b"x" * 4096)
     blocked.write_bytes(b"y" * 4096)
 
-    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_FORCE_RM="1")
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_FORCE_RM="1",
+               APPLE_CLEANUP_TEST_MODE="1")
     command = f'''
 source "{SCRIPT}" --__noop
 scan_all() {{ :; }}

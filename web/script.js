@@ -21,13 +21,13 @@
     {
       key: 'system_cache',  index: 2,  name: 'System Cache',
       desc: 'System-level cache',
-      icon: 'i-cpu', color: '#6f6ff7', defaultChecked: true, danger: false,
+      icon: 'i-cpu', color: '#6f6ff7', defaultChecked: false, danger: false,
       tags: [{ icon: 'i-lock', label: 'sudo', style: 'amber' }],
     },
     {
       key: 'app_leftovers', index: 3,  name: 'App Leftovers',
       desc: 'Leftovers from removed apps',
-      icon: 'i-leftover', color: '#a26bf7', defaultChecked: true, danger: false, tags: [],
+      icon: 'i-leftover', color: '#a26bf7', defaultChecked: false, danger: false, tags: [],
     },
     {
       key: 'logs',          index: 4,  name: 'Logs',
@@ -37,22 +37,26 @@
     {
       key: 'temp_files',    index: 5,  name: 'Temporary Files',
       desc: 'Temporary and intermediate files',
-      icon: 'i-temp', color: '#16a34a', defaultChecked: true, danger: false, tags: [],
+      icon: 'i-temp', color: '#16a34a', defaultChecked: false, danger: false,
+      tags: [{ icon: 'i-warn', label: 'permanent', style: 'amber' }],
     },
     {
       key: 'developer',     index: 6,  name: 'Developer',
       desc: 'Xcode DerivedData and broken links',
-      icon: 'i-dev', color: '#d97706', defaultChecked: true, danger: false, tags: [],
+      icon: 'i-dev', color: '#d97706', defaultChecked: false, danger: false,
+      tags: [{ icon: 'i-warn', label: 'mixed recovery', style: 'amber' }],
     },
     {
       key: 'trash',         index: 7,  name: 'Trash',
       desc: 'Files in the Trash',
-      icon: 'i-trash', color: '#8b8f99', defaultChecked: true, danger: false, tags: [],
+      icon: 'i-trash', color: '#8b8f99', defaultChecked: false, danger: true,
+      tags: [{ icon: 'i-warn', label: 'permanent', style: 'red' }],
     },
     {
       key: 'browser_cache', index: 8,  name: 'Browser Cache',
       desc: 'Cache only — cookies & sessions kept',
-      icon: 'i-browser', color: '#f59e0b', defaultChecked: false, danger: false, tags: [],
+      icon: 'i-browser', color: '#f59e0b', defaultChecked: true, danger: false,
+      tags: [{ icon: 'i-check', label: 'Trash first', style: 'amber' }],
     },
     {
       key: 'browser_full',  index: 9,  name: 'Browser All Data',
@@ -75,7 +79,8 @@
     {
       key: 'mail_downloads', index: 12, name: 'Mail Downloads',
       desc: 'Files downloaded from Mail attachments',
-      icon: 'i-mail', color: '#0ea5e9', defaultChecked: true, danger: false, tags: [],
+      icon: 'i-mail', color: '#0ea5e9', defaultChecked: false, danger: false,
+      tags: [{ icon: 'i-check', label: 'Trash first', style: 'amber' }],
     },
     {
       key: 'diagnostic_reports', index: 13, name: 'Diagnostic Reports',
@@ -95,7 +100,8 @@
     {
       key: 'other_trash', index: 16, name: 'Trash on Other Volumes',
       desc: 'Trash bins on external disks',
-      icon: 'i-trash', color: '#8b8f99', defaultChecked: true, danger: false, tags: [],
+      icon: 'i-trash', color: '#8b8f99', defaultChecked: false, danger: true,
+      tags: [{ icon: 'i-warn', label: 'permanent', style: 'red' }],
     },
     {
       key: 'project_artifacts', index: 17, name: 'Project Builds',
@@ -335,6 +341,18 @@
     if (!container) return out;
     $$('input[type="checkbox"]', container).forEach((cb) => {
       if (cb.checked) out.push(cb.dataset.subId);
+    });
+    return out;
+  }
+
+  function getSelectedProjectArtifacts() {
+    const out = [];
+    const container = $('.subitems[data-cat="project_artifacts"]');
+    if (!container) return out;
+    $$('input[type="checkbox"]', container).forEach((cb) => {
+      if (cb.checked && cb.dataset.identity) {
+        out.push({ path: cb.dataset.subId, identity: cb.dataset.identity });
+      }
     });
     return out;
   }
@@ -673,7 +691,7 @@
 
       let checkedAttr = '';
       if (key === 'app_leftovers') checkedAttr = sub.is_orphaned ? 'checked' : '';
-      else if (key === 'developer') checkedAttr = 'checked';
+      else if (key === 'developer') checkedAttr = '';
       else if (key === 'browser_full') checkedAttr = '';
       else if (key === 'ios_backups') checkedAttr = '';
       else if (key === 'app_uninstaller') checkedAttr = '';
@@ -709,7 +727,7 @@
       ].join('');
 
       row.innerHTML = `
-        <input type="checkbox" aria-label="Select ${escapeAttr(sub.name)}" data-sub-id="${escapeAttr(sub.id)}" ${checkedAttr}>
+        <input type="checkbox" aria-label="Select ${escapeAttr(sub.name)}" data-sub-id="${escapeAttr(sub.id)}" data-identity="${escapeAttr(sub.identity || '')}" ${checkedAttr}>
         <span class="subitem-name" title="${escapeAttr(desc || sub.path || sub.name)}">
           <b>${escapeHtml(sub.name)}</b>
           ${descHtml}
@@ -770,7 +788,7 @@
     if (dangerSelected.length > 0) {
       const dnames = dangerSelected.map((k) => CAT_BY_KEY[k]?.name || k).join(', ');
       const dangerOk = confirm(
-        `RISKY categories selected (${dnames}). This data is permanently deleted and cannot be recovered. Continue?`
+        `RISKY categories selected (${dnames}). Some actions are permanent; Trash-first items are recoverable only when a Trash destination is recorded. Continue?`
       );
       if (!dangerOk) {
         termLog('Risky categories not confirmed, cleanup cancelled.', 'info');
@@ -789,14 +807,14 @@
     try {
       const dryRun = !!(el.dryRunToggle && el.dryRunToggle.checked);
       const payload = {
-        categories: selected,
+        categories: selected.map((idx) => KEY_BY_INDEX[idx]),
         dry_run: dryRun,
         app_leftovers_selected: getSelectedSubitems('app_leftovers'),
         browser_full_selected: getSelectedSubitems('browser_full'),
         developer_selected: getSelectedSubitems('developer'),
         ios_backups_selected: getSelectedSubitems('ios_backups'),
         app_uninstaller_selected: getSelectedSubitems('app_uninstaller'),
-        project_artifacts_selected: getSelectedSubitems('project_artifacts'),
+        project_artifacts_selected: getSelectedProjectArtifacts(),
       };
       const data = await apiFetch('/api/clean', {
         method: 'POST',
@@ -1523,7 +1541,7 @@
     if (!confirmed) { termLog('Cleanup cancelled.', 'info'); return; }
     if (dangerRows.length > 0) {
       const ok = confirm(
-        `RISKY items selected (${dangerRows.length}). This data is permanently deleted and cannot be recovered. Continue?`);
+        `RISKY items selected (${dangerRows.length}). Some actions are permanent; review the recovery label before continuing.`);
       if (!ok) { termLog('Risky items not confirmed, cleanup cancelled.', 'info'); return; }
     }
 

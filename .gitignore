@@ -2,10 +2,14 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
-docs/*
+# Documentation is source-controlled; only generated render output is ignored.
+docs/generated/
 # diagnostic / runtime artifacts
 cleanup-log.txt
 diagnose-log.txt
 scan-out.json
 scan-err.txt
 scan-debug.txt
+Mole-main/
+
+

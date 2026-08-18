@@ -284,6 +284,14 @@ L() {
     en::brew_cleanup_success)  echo "Homebrew cleanup (brew cleanup -s) completed" ;;
     tr::brew_cleanup_failed)   echo "Homebrew temizliği başarısız oldu" ;;
     en::brew_cleanup_failed)   echo "Homebrew cleanup failed" ;;
+    tr::docker_cleanup_failed) echo "Docker temizliği başarısız oldu" ;;
+    en::docker_cleanup_failed) echo "Docker cleanup failed" ;;
+    tr::would_run)             echo "çalıştırılacaktı" ;;
+    en::would_run)             echo "would run" ;;
+    tr::active_path_skipped)   echo "çalışan uygulama veya açık veritabanı nedeniyle atlandı" ;;
+    en::active_path_skipped)   echo "skipped because an application is running or a database is open" ;;
+    tr::live_check_failed)     echo "canlı dosya güvenle doğrulanamadığı için atlandı" ;;
+    en::live_check_failed)     echo "skipped because live-file safety could not be verified" ;;
 
     # ── App Uninstaller ──────────────────────────────────────
     tr::no_app_specified)     echo "Kaldırılacak uygulama belirtilmedi, atlanıyor." ;;
@@ -358,8 +366,11 @@ CLEAN_RESULTS=()
 CLEAN_ERRORS=()
 CLEAN_WARNINGS=()
 
-# When set to 1, bypass trash-first and use rm -rf directly (for CI/testing)
+# Test-only escape hatch. It is accepted only with APPLE_CLEANUP_TEST_MODE=1
+# and an isolated temporary HOME; production callers cannot silently inherit a
+# permanent-delete mode from their environment.
 FORCE_RM="${APPLE_CLEANUP_FORCE_RM:-0}"
+TEST_MODE="${APPLE_CLEANUP_TEST_MODE:-0}"
 
 # When set to 1, preview only: report what WOULD be removed without deleting.
 DRYRUN="${APPLE_CLEANUP_DRYRUN:-0}"
@@ -397,6 +408,7 @@ APP_UNINSTALLER_CLEAN=""
 APP_UNINSTALLER_PATH=""
 APP_UNINSTALLER_BUNDLE_ID=""
 PROJECT_ARTIFACT_CLEAN=""
+PROJECT_ARTIFACT_IDENTITIES=""
 
 MAIL_DOWNLOADS_DIR="$HOME/Library/Containers/com.apple.mail/Data/Library/Mail Downloads"
 
@@ -506,6 +518,14 @@ cat_field() {
 cat_name() {
   local idx="$1"
   cat_display_name "${CAT_IDS[$idx]}"
+}
+
+cat_recovery() {
+  case "$1" in
+    system_cache|temp_files|trash|quicklook_cache|other_trash) echo "permanent" ;;
+    developer|logs) echo "mixed" ;;
+    *) echo "trash" ;;
+  esac
 }
 
 # id → index (returns -1 if not found)
@@ -630,17 +650,30 @@ oplog_record() {
   path="${path//$'\t'/ }"; path="${path//$'\n'/ }"
   trash_dest="${trash_dest//$'\t'/ }"; trash_dest="${trash_dest//$'\n'/ }"
   local dir; dir="$(dirname "$OPLOG_FILE")"
+  [ -L "$dir" ] && return 0
   mkdir -p "$dir" 2>/dev/null || return 0
+  [ -d "$dir" ] && [ -O "$dir" ] && [ ! -L "$dir" ] || return 0
+  chmod 700 "$dir" 2>/dev/null || return 0
+  [ -L "$OPLOG_FILE" ] && return 0
+  if [ -e "$OPLOG_FILE" ]; then
+    [ -f "$OPLOG_FILE" ] && [ -O "$OPLOG_FILE" ] || return 0
+  fi
   if [ -f "$OPLOG_FILE" ]; then
     local sz; sz=$(wc -c <"$OPLOG_FILE" 2>/dev/null | tr -d ' ')
     if [ -n "$sz" ] && [ "$sz" -gt "$OPLOG_MAX_BYTES" ] 2>/dev/null; then
-      local lines half
+      local lines half rotate_tmp
       lines=$(wc -l <"$OPLOG_FILE" 2>/dev/null | tr -d ' ')
       half=$(( lines / 2 )); [ "$half" -lt 1 ] && half=1
-      tail -n "$half" "$OPLOG_FILE" >"$OPLOG_FILE.tmp" 2>/dev/null \
-        && mv "$OPLOG_FILE.tmp" "$OPLOG_FILE" 2>/dev/null
+      rotate_tmp=$(mktemp "$dir/.operations.log.rotate.XXXXXX" 2>/dev/null) || return 0
+      if tail -n "$half" "$OPLOG_FILE" >"$rotate_tmp" 2>/dev/null; then
+        chmod 600 "$rotate_tmp" 2>/dev/null || true
+        mv "$rotate_tmp" "$OPLOG_FILE" 2>/dev/null || true
+      else
+        rm -f "$rotate_tmp" 2>/dev/null || true
+      fi
     fi
   fi
+  umask 077
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$(date +%s)" "$SESSION_ID" "$action" "$bytes" "$path" "$trash_dest" "$category" \
     >>"$OPLOG_FILE" 2>/dev/null || true
@@ -698,23 +731,40 @@ _trash_item() {
   # -L keeps broken symlinks (target gone, -e is false) in scope.
   [ -e "$path" ] || [ -L "$path" ] || return 0
 
+  local base expected expected_was_free=false
+  base=$(basename "$path")
+  expected="$HOME/.Trash/$base"
+  if [ ! -e "$expected" ] && [ ! -L "$expected" ]; then
+    expected_was_free=true
+  fi
+
   # Tier 1: AppleScript (native Finder trash with undo support).
   # Pass the path as an argv item rather than interpolating it into the script
   # source, so quotes/backslashes in a filename can't break or inject script.
   if osascript -e 'on run argv' \
                -e 'tell application "Finder" to move POSIX file (item 1 of argv) to trash' \
                -e 'end run' "$path" >/dev/null 2>&1; then
+    if $expected_was_free && { [ -e "$expected" ] || [ -L "$expected" ]; }; then
+      echo "$expected"
+    fi
     return 0
   fi
 
   # Tier 2: Manual mv to ~/.Trash with collision-safe naming
-  local base dest
-  base=$(basename "$path")
+  [ -L "$HOME/.Trash" ] && return 1
+  if [ ! -d "$HOME/.Trash" ]; then
+    mkdir -m 700 "$HOME/.Trash" 2>/dev/null || return 1
+  fi
+  [ -O "$HOME/.Trash" ] || return 1
+  local dest
   dest="$HOME/.Trash/$base"
-  if [ -e "$dest" ]; then
+  if [ -e "$dest" ] || [ -L "$dest" ]; then
     # Append timestamp + pid + random so collisions within the same second
     # (two identically-named items) don't overwrite each other.
     dest="$HOME/.Trash/${base}.$(date +%s).$$.${RANDOM}"
+    while [ -e "$dest" ] || [ -L "$dest" ]; do
+      dest="$HOME/.Trash/${base}.$(date +%s).$$.${RANDOM}"
+    done
   fi
   if mv "$path" "$dest" 2>/dev/null; then
     echo "$dest"
@@ -729,13 +779,247 @@ _should_force_rm() {
   local needs_sudo="${1:-0}"
   local is_trash_empty="${2:-0}"
   # Force RM conditions:
-  #   1. CI/test bypass env var
+  #   1. Explicit test bypass in an isolated temporary HOME
   #   2. Category requires sudo (system paths)
   #   3. We are emptying the trash itself
-  [ "$FORCE_RM" = "1" ] && return 0
+  if [ "$FORCE_RM" = "1" ] && [ "$TEST_MODE" = "1" ]; then
+    case "$HOME" in
+      /tmp/*|/private/tmp/*|/private/var/folders/*) return 0 ;;
+    esac
+  fi
   [ "$needs_sudo" -eq 1 ] && return 0
   [ "$is_trash_empty" -eq 1 ] && return 0
   return 1
+}
+
+# Run a non-file mutating command under the same dry-run contract as safe_rm.
+# Arguments: success translation key, failure translation key, command argv...
+run_mutating_action() {
+  local success_key="$1"
+  local failure_key="$2"
+  shift 2
+
+  if [ "$DRYRUN" = "1" ]; then
+    success "$(L "$success_key") — $(L would_run)"
+    TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+    return 0
+  fi
+
+  if "$@" >/dev/null 2>&1; then
+    success "$(L "$success_key")"
+    TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
+    return 0
+  fi
+
+  warn "$(L "$failure_key")"
+  record_clean_warning "$(L "$failure_key")"
+  return 1
+}
+
+_simctl_erase_all() {
+  xcrun simctl shutdown all >/dev/null 2>&1 || true
+  xcrun simctl erase all
+}
+
+# Classify the only filesystem scopes the cleaner is allowed to mutate. The
+# value is used both before and after resolving parent symlinks; a scope change
+# is treated as an escape and rejected.
+_removal_scope() {
+  local path="$1"
+  case "$path" in
+    "$HOME") echo "protected" ;;
+    "$HOME/Downloads"|"$HOME/Downloads"/*) echo "protected" ;;
+    "$HOME"/*) echo "home" ;;
+    /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*) echo "temporary" ;;
+    /Library/Caches/*) echo "system_cache" ;;
+    /Library/Logs/*) echo "system_logs" ;;
+    /Library/LaunchAgents/*|/Library/LaunchDaemons/*) echo "launchagents" ;;
+    /Applications/*.app) echo "applications" ;;
+    /Volumes/*/.Trashes/*) echo "external_trash" ;;
+    *) echo "protected" ;;
+  esac
+}
+
+_scope_allowed_for_context() {
+  local scope="$1"
+  case "$scope" in
+    home|temporary) return 0 ;;
+    system_cache) [ "$_CURRENT_CATEGORY" = "system_cache" ] ;;
+    system_logs) [ "$_CURRENT_CATEGORY" = "logs" ] ;;
+    launchagents) [ "$_CURRENT_CATEGORY" = "launchagents" ] ;;
+    applications) [ "$_CURRENT_CATEGORY" = "app_uninstaller" ] ;;
+    external_trash) [ "$_CURRENT_CATEGORY" = "other_trash" ] ;;
+    *) return 1 ;;
+  esac
+}
+
+# Validate a deletion target without resolving the final component. Removing a
+# leaf symlink removes the link itself; resolving its parent catches ancestor
+# symlink escapes that could redirect rm to a different filesystem scope.
+# Mode "contents" additionally rejects a symlink target and resolves the target
+# directory itself because its children are about to be traversed.
+_validate_removal_path() {
+  local path="$1"
+  local mode="${2:-leaf}"
+  local label="${3:-$1}"
+  local reason=""
+
+  if [ -z "$path" ]; then
+    reason="$(L empty_path): $label"
+  elif [ "${path#/}" = "$path" ]; then
+    reason="$(L protected_path): relative path: $path"
+  elif printf '%s' "$path" | LC_ALL=C grep -q '[[:cntrl:]]'; then
+    reason="$(L protected_path): control character in path"
+  else
+    case "$path" in
+      */../*|*/..) reason="$(L protected_path): parent traversal: $path" ;;
+      /|//*) reason="$(L protected_path): $path" ;;
+    esac
+  fi
+
+  local logical_scope=""
+  if [ -z "$reason" ]; then
+    logical_scope=$(_removal_scope "$path")
+    if ! _scope_allowed_for_context "$logical_scope"; then
+      reason="$(L protected_path): $path"
+    fi
+  fi
+
+  local physical_path="" parent base physical_parent physical_scope
+  if [ -z "$reason" ]; then
+    if [ "$mode" = "contents" ]; then
+      if [ -L "$path" ]; then
+        reason="$(L protected_path): symlinked directory: $path"
+      else
+        physical_path=$(cd -P "$path" 2>/dev/null && pwd -P) || \
+          reason="$(L protected_path): unresolved path: $path"
+      fi
+    else
+      parent=$(dirname "$path")
+      base=$(basename "$path")
+      physical_parent=$(cd -P "$parent" 2>/dev/null && pwd -P) || \
+        reason="$(L protected_path): unresolved parent: $path"
+      [ -n "$physical_parent" ] && physical_path="$physical_parent/$base"
+    fi
+  fi
+
+  if [ -z "$reason" ]; then
+    physical_scope=$(_removal_scope "$physical_path")
+    if [ "$logical_scope" != "$physical_scope" ] || \
+       ! _scope_allowed_for_context "$physical_scope"; then
+      reason="$(L protected_path): symlink scope escape: $path"
+    fi
+  fi
+
+  if [ -n "$reason" ]; then
+    err "$reason"
+    record_clean_error "$reason"
+    return 1
+  fi
+  return 0
+}
+
+_requires_live_guard() {
+  case "$1" in
+    "$HOME/Library/Caches"/*|\
+    "$HOME/Library/Safari"|"$HOME/Library/Safari"/*|\
+    "$HOME/Library/Cookies"|"$HOME/Library/Cookies"/*|\
+    "$HOME/Library/WebKit"/*|"$HOME/Library/HTTPStorages"/*|\
+    "$HOME/Library/Application Support/Google/Chrome"|\
+    "$HOME/Library/Application Support/Google/Chrome"/*|\
+    "$HOME/Library/Application Support/Firefox"|\
+    "$HOME/Library/Application Support/Firefox"/*|\
+    "$HOME/Library/Application Support/BraveSoftware"|\
+    "$HOME/Library/Application Support/BraveSoftware"/*|\
+    "$HOME/Library/Application Support/Microsoft Edge"|\
+    "$HOME/Library/Application Support/Microsoft Edge"/*|\
+    "$HOME/Library/Application Support/Arc"|\
+    "$HOME/Library/Application Support/Arc"/*) return 0 ;;
+  esac
+  return 1
+}
+
+_path_contains_database() {
+  local path="$1"
+  [ -d "$path" ] || return 1
+  find "$path" -maxdepth 4 -type f \
+    \( -name '*.sqlite' -o -name '*.sqlite3' -o -name '*.db' \
+       -o -name '*-wal' -o -name '*-shm' \) -print -quit 2>/dev/null | \
+    grep -q .
+}
+
+# Return 0 when lsof found an open file, 1 when it found none, and 2 when the
+# inspection was unavailable or exceeded its deadline. The deadline prevents a
+# recursive lsof walk from hanging a cleanup on large browser profiles.
+_path_has_open_files() {
+  local path="$1" lsof_bin pid loops=0 status
+  lsof_bin=$(command -v lsof 2>/dev/null) || return 2
+  "$lsof_bin" -nP +D "$path" >/dev/null 2>&1 &
+  pid=$!
+  while kill -0 "$pid" 2>/dev/null; do
+    if [ "$loops" -ge 30 ]; then
+      kill "$pid" 2>/dev/null || true
+      wait "$pid" 2>/dev/null || true
+      return 2
+    fi
+    sleep 0.1
+    loops=$((loops + 1))
+  done
+  if wait "$pid" 2>/dev/null; then status=0; else status=$?; fi
+  [ "$status" -eq 0 ] && return 0
+  [ "$status" -eq 1 ] && return 1
+  return 2
+}
+
+_path_owner_is_running() {
+  local path="$1" owner bundle_id="" app_list
+  owner=$(basename "$path")
+  case "$path" in
+    "$HOME/Library/Safari"*) bundle_id="com.apple.Safari" ;;
+    *"/Google/Chrome"*) bundle_id="com.google.Chrome" ;;
+    *"/Firefox"*) bundle_id="org.mozilla.firefox" ;;
+    *"/BraveSoftware"*) bundle_id="com.brave.Browser" ;;
+    *"/Microsoft Edge"*) bundle_id="com.microsoft.edgemac" ;;
+    *"/Arc"*) bundle_id="company.thebrowser.Browser" ;;
+    *)
+      case "$owner" in
+        com.*|org.*|net.*|io.*|dev.*) bundle_id="$owner" ;;
+      esac
+      ;;
+  esac
+  [ -n "$bundle_id" ] || return 1
+  [ -x /usr/bin/lsappinfo ] || return 1
+  app_list=$(/usr/bin/lsappinfo list 2>/dev/null) || return 1
+  case "$app_list" in *"$bundle_id"*) return 0 ;; esac
+  return 1
+}
+
+_guard_live_path() {
+  local path="$1" label="${2:-$1}" open_status
+  _requires_live_guard "$path" || return 0
+
+  if _path_owner_is_running "$path"; then
+    warn "$label: $(L active_path_skipped)"
+    record_clean_warning "$label: $(L active_path_skipped)"
+    return 1
+  fi
+
+  if _path_has_open_files "$path"; then
+    open_status=0
+  else
+    open_status=$?
+  fi
+  if [ "$open_status" -eq 0 ]; then
+    warn "$label: $(L active_path_skipped)"
+    record_clean_warning "$label: $(L active_path_skipped)"
+    return 1
+  fi
+  if [ "$open_status" -eq 2 ] && _path_contains_database "$path"; then
+    warn "$label: $(L live_check_failed)"
+    record_clean_warning "$label: $(L live_check_failed)"
+    return 1
+  fi
+  return 0
 }
 
 # Context variable: set by clean functions to indicate sudo context
@@ -748,23 +1032,26 @@ _CURRENT_CATEGORY=""
 safe_rm() {
   local path="$1"
   local label="${2:-$1}"
+  local expected_identity="${3:-}"
   [ -z "$path" ] && {
     err "$(L empty_path): $label"
     record_clean_error "$(L empty_path): $label"
     return 0
   }
-  case "$path" in
-    /System/*|/usr/*|/bin/*|/sbin/*|/etc/*|/private/etc/*)
-      err "$(L protected_path): $path"
-      record_clean_error "$(L protected_path): $path"
-      return 0 ;;
-  esac
   if _is_excluded "$path"; then
     info "$(L excluded): $label"
     return 0
   fi
   # -L keeps broken symlinks (target gone, -e is false) in scope.
   [ -e "$path" ] || [ -L "$path" ] || return 0
+  _validate_removal_path "$path" leaf "$label" || return 0
+  _guard_live_path "$path" "$label" || return 0
+  if [ -n "$expected_identity" ] && \
+     [ "$(_project_artifact_identity "$path" 2>/dev/null || true)" != "$expected_identity" ]; then
+    warn "$(L invalid_artifact): $path"
+    record_clean_error "$(L invalid_artifact): identity changed: $path"
+    return 0
+  fi
   local sz_b; sz_b=$(get_size_bytes "$path")
   local sz_h; sz_h=$(format_bytes "$sz_b")
 
@@ -776,6 +1063,12 @@ safe_rm() {
   fi
 
   if _should_force_rm "$_CURRENT_NEEDS_SUDO" "$_CURRENT_IS_TRASH_EMPTY"; then
+    if [ -n "$expected_identity" ] && \
+       [ "$(_project_artifact_identity "$path" 2>/dev/null || true)" != "$expected_identity" ]; then
+      warn "$(L invalid_artifact): $path"
+      record_clean_error "$(L invalid_artifact): identity changed: $path"
+      return 0
+    fi
     # Direct rm -rf (sudo paths, trash emptying, or CI mode)
     if $SUDO_AVAILABLE && [ "$_CURRENT_NEEDS_SUDO" -eq 1 ]; then
       if sudo rm -rf "$path" 2>/dev/null; then
@@ -800,6 +1093,12 @@ safe_rm() {
     fi
   else
     # Trash-first (user files, non-sudo)
+    if [ -n "$expected_identity" ] && \
+       [ "$(_project_artifact_identity "$path" 2>/dev/null || true)" != "$expected_identity" ]; then
+      warn "$(L invalid_artifact): $path"
+      record_clean_error "$(L invalid_artifact): identity changed: $path"
+      return 0
+    fi
     local _td; _td="$(_trash_item "$path" || true)"
     if [ -n "$_td" ] || [ ! -e "$path" ]; then
       success "$label: ${BOLD}${sz_h}${NC} $(L trashed)"
@@ -816,17 +1115,13 @@ safe_rm() {
 safe_rm_contents() {
   local path="$1"
   local label="${2:-$1}"
-  [ -d "$path" ] || return 0
   [ -z "$path" ] && {
     record_clean_error "$(L empty_path): $label"
     return 0
   }
-  case "$path" in
-    /System/*|/usr/*|/bin/*|/sbin/*|/etc/*|/private/etc/*)
-      err "$(L protected_path): $path"
-      record_clean_error "$(L protected_path): $path"
-      return 0 ;;
-  esac
+  [ -d "$path" ] || return 0
+  _validate_removal_path "$path" contents "$label" || return 0
+  _guard_live_path "$path" "$label" || return 0
   # Exclusion-aware mode: when the user defined protected paths, delete each
   # child individually (via safe_rm, which honors excludes + dry-run) so a
   # protected item inside the directory is never swept away by a bulk rm.
@@ -857,6 +1152,10 @@ safe_rm_contents() {
     local removed_bytes=0
     local child child_sz
     while IFS= read -r -d '' child; do
+      if ! _validate_removal_path "$child" leaf "$label"; then
+        delete_failed=true
+        continue
+      fi
       child_sz=$(get_size_bytes "$child")
       local child_removed=false
       if $SUDO_AVAILABLE && [ "$_CURRENT_NEEDS_SUDO" -eq 1 ]; then
@@ -897,6 +1196,10 @@ safe_rm_contents() {
     local trashed_bytes=0
     local child _td
     while IFS= read -r -d '' child; do
+      if ! _validate_removal_path "$child" leaf "$label"; then
+        trash_failed=true
+        continue
+      fi
       # Capture size BEFORE trashing; afterwards the child is gone and any size
       # read returns 0. Use get_size_bytes so files (not just dirs) are measured.
       local child_sz; child_sz=$(get_size_bytes "$child")
@@ -1305,17 +1608,7 @@ clean_system_cache() {
   header "$(L hdr_system_cache)"
   local item
   while IFS= read -r -d '' item; do
-    _is_excluded "$item" && continue
-    local sz_b; sz_b=$(sudo du -sk "$item" 2>/dev/null | awk '{print $1*1024}') || continue
-    [ "$sz_b" -le 0 ] 2>/dev/null && continue
-    local sz_h; sz_h=$(format_bytes "$sz_b")
-    if sudo rm -rf "$item" 2>/dev/null; then
-      success "$(basename "$item"): ${BOLD}${sz_h}${NC} $(L deleted)"
-      TOTAL_FREED=$((TOTAL_FREED + sz_b))
-      TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-    else
-      err "$(basename "$item") $(L delete_failed)"
-    fi
+    safe_rm "$item" "$(basename "$item")"
   done < <(sudo find /Library/Caches -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
 }
 
@@ -1327,17 +1620,7 @@ clean_logs() {
     _CURRENT_NEEDS_SUDO=1
     local item
     while IFS= read -r -d '' item; do
-      _is_excluded "$item" && continue
-      local sz_b; sz_b=$(sudo du -sk "$item" 2>/dev/null | awk '{print $1*1024}') || continue
-      [ "$sz_b" -le 0 ] 2>/dev/null && continue
-      local sz_h; sz_h=$(format_bytes "$sz_b")
-      if sudo rm -rf "$item" 2>/dev/null; then
-        success "$(basename "$item"): ${BOLD}${sz_h}${NC} $(L deleted)"
-        TOTAL_FREED=$((TOTAL_FREED + sz_b))
-        TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
-      else
-        err "$(basename "$item") $(L delete_failed)"
-      fi
+      safe_rm "$item" "$(basename "$item")"
     done < <(sudo find /Library/Logs -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
     _CURRENT_NEEDS_SUDO=0
   fi
@@ -1638,6 +1921,11 @@ clean_app_uninstaller() {
       if [ "$DRYRUN" != "1" ] && { [ -e "$app_path" ] || [ -L "$app_path" ]; }; then
         continue
       fi
+      if app_bundle_sibling_exists "$bundle_id" "$app_path"; then
+        warn "Shared application data preserved; another bundle uses $bundle_id"
+        record_clean_warning "Shared application data preserved; another bundle uses $bundle_id"
+        continue
+      fi
       local dir
       while IFS= read -r -d '' dir; do
         if [ -e "$dir" ]; then
@@ -1670,11 +1958,7 @@ clean_quicklook_cache() {
   _CURRENT_NEEDS_SUDO=0; _CURRENT_IS_TRASH_EMPTY=0
   header "$(L hdr_quicklook)"
   if command -v qlmanage &>/dev/null; then
-    if qlmanage -r cache >/dev/null 2>&1; then
-      success "$(L ql_reset)"
-    else
-      warn "$(L ql_failed)"
-    fi
+    run_mutating_action ql_reset ql_failed qlmanage -r cache || true
   else
     warn "$(L ql_missing)"
   fi
@@ -1866,8 +2150,8 @@ clean_developer() {
           ;;
         docker_prune)
           if command -v docker &>/dev/null; then
-            docker system prune -a -f --volumes 2>/dev/null || true
-            success "$(L docker_cleaned)"
+            run_mutating_action docker_cleaned docker_cleanup_failed \
+              docker system prune -a -f --volumes || true
           else
             info "$(L docker_missing)"
           fi
@@ -1906,11 +2190,8 @@ clean_developer() {
           ;;
         simctl_unavailable)
           if command -v xcrun &>/dev/null; then
-            if xcrun simctl delete unavailable >/dev/null 2>&1; then
-              success "$(L simctl_deleted)"
-            else
-              warn "$(L simctl_failed)"
-            fi
+            run_mutating_action simctl_deleted simctl_failed \
+              xcrun simctl delete unavailable || true
           fi
           ;;
         xcode_products)
@@ -1927,12 +2208,8 @@ clean_developer() {
           # loses the device registry. `erase all` reclaims per-device data
           # (installed apps, settings) while keeping the devices registered.
           if command -v xcrun &>/dev/null; then
-            xcrun simctl shutdown all >/dev/null 2>&1
-            if xcrun simctl erase all >/dev/null 2>&1; then
-              success "$(L simctl_erased)"
-            else
-              warn "$(L simctl_failed)"
-            fi
+            run_mutating_action simctl_erased simctl_failed \
+              _simctl_erase_all || true
           fi
           ;;
         font_caches)
@@ -1945,11 +2222,8 @@ clean_developer() {
           ;;
         brew_cleanup)
           if command -v brew &>/dev/null; then
-            if brew cleanup -s >/dev/null 2>&1; then
-              success "$(L brew_cleanup_success)"
-            else
-              warn "$(L brew_cleanup_failed)"
-            fi
+            run_mutating_action brew_cleanup_success brew_cleanup_failed \
+              brew cleanup -s || true
           fi
           ;;
         swift_pm_cache)
@@ -2634,16 +2908,20 @@ is_valid_app_bundle_path() {
 }
 
 is_protected_app_bundle_id() {
-  case "${1:-}" in
-    com.apple.finder|com.apple.Safari|com.apple.mail|com.apple.Terminal|\
-    com.apple.systempreferences|com.apple.ActivityMonitor|com.apple.Console|\
-    com.apple.DiskUtility|com.apple.dt.Xcode|com.apple.AppStore|com.apple.iCal|\
-    com.apple.AddressBook|com.apple.Preview|com.apple.TextEdit|\
-    com.apple.calculator|com.apple.Dictionary|com.apple.Maps|com.apple.Notes|\
-    com.apple.reminders|com.apple.Stickies|com.apple.VoiceMemos|\
-    com.apple.stocks|com.apple.weather|com.apple.Passwords|com.apple.FaceTime|\
-    com.apple.MobileSMS|com.apple.Photos|com.apple.Music) return 0 ;;
-  esac
+  case "${1:-}" in com.apple.*) return 0 ;; esac
+  return 1
+}
+
+app_bundle_sibling_exists() {
+  local bundle_id="$1" excluded_path="${2:-}" candidate candidate_id
+  [ -n "$bundle_id" ] || return 1
+  while IFS= read -r -d '' candidate; do
+    [ "$candidate" = "$excluded_path" ] && continue
+    [ -L "$candidate" ] && continue
+    candidate_id=$(get_app_bundle_id "$candidate")
+    [ "$candidate_id" = "$bundle_id" ] && return 0
+  done < <(find /Applications "$HOME/Applications" -maxdepth 3 \
+    -name '*.app' -prune -print0 2>/dev/null)
   return 1
 }
 
@@ -2763,9 +3041,60 @@ _artifact_type_for_marker() {
   esac
 }
 
-# Discover artifacts; emits "<size_bytes>\t<type_label>\t<artifact_path>" lines.
+# Portable device/inode identity for macOS (BSD stat) and test hosts (GNU stat).
+_file_identity() {
+  stat -f '%d:%i' "$1" 2>/dev/null || stat -c '%d:%i' "$1" 2>/dev/null
+}
+
+# Return an identity bound to the artifact directory, its parent, and the exact
+# manifest that authorizes this artifact type. Ancestor symlinks may remain
+# inside HOME, but resolving outside HOME is always rejected.
+_project_artifact_identity() {
+  local path="$1"
+  local requested_marker="${2:-}"
+  [ -d "$path" ] && [ ! -L "$path" ] || return 1
+  case "$path" in
+    "$HOME"/*) ;;
+    *) return 1 ;;
+  esac
+  case "$path" in
+    "$HOME/Downloads"/*|*/../*|*/..) return 1 ;;
+  esac
+
+  local parent base physical_parent physical_home marker type_info artifact_name
+  local artifact_id parent_id marker_id
+  parent=$(dirname "$path")
+  base=$(basename "$path")
+  physical_parent=$(cd -P "$parent" 2>/dev/null && pwd -P) || return 1
+  physical_home=$(cd -P "$HOME" 2>/dev/null && pwd -P) || return 1
+  case "$physical_parent" in
+    "$physical_home"/*) ;;
+    *) return 1 ;;
+  esac
+
+  local IFS='|'
+  for marker in $_PROJECT_MARKERS; do
+    [ -z "$requested_marker" ] || [ "$marker" = "$requested_marker" ] || continue
+    type_info=$(_artifact_type_for_marker "$marker")
+    artifact_name="${type_info##* }"
+    [ "$artifact_name" = "$base" ] || continue
+    [ -f "$parent/$marker" ] && [ ! -L "$parent/$marker" ] || continue
+    artifact_id=$(_file_identity "$path") || return 1
+    parent_id=$(_file_identity "$parent") || return 1
+    marker_id=$(_file_identity "$parent/$marker") || return 1
+    printf '%s:%s:%s:%s\n' \
+      "$artifact_id" "$parent_id" "$marker_id" \
+      "$marker"
+    return 0
+  done
+  return 1
+}
+
+# Discover artifacts; emits
+# "<size>\t<type>\t<path>\t<identity>" lines. Paths containing delimiters used
+# by the CLI transport are skipped rather than ambiguously reinterpreted.
 _find_project_artifacts() {
-  local root_rel root marker parent mbase type_info label artifact_name art_path s
+  local root_rel root marker parent mbase type_info label artifact_name art_path s identity
   for root_rel in "${_PROJECT_SCAN_ROOTS[@]}"; do
     root="$HOME/$root_rel"
     [ -d "$root" ] || continue
@@ -2779,9 +3108,11 @@ _find_project_artifacts() {
       parent=$(dirname "$marker")
       art_path="$parent/$artifact_name"
       [ -d "$art_path" ] || continue
+      case "$art_path" in *','*|*$'\t'*|*$'\n'*) continue ;; esac
+      identity=$(_project_artifact_identity "$art_path" "$mbase") || continue
       s=$(get_dir_size_bytes "$art_path") || s=0
       [ "$s" -ge "$_PROJECT_ARTIFACT_MIN_BYTES" ] 2>/dev/null || continue
-      printf '%s\t%s\t%s\n' "$s" "$label" "$art_path"
+      printf '%s\t%s\t%s\t%s\n' "$s" "$label" "$art_path" "$identity"
     done < <(find "$root" -maxdepth 6 \
         \( -name node_modules -o -name target -o -name .build -o -name build \
            -o -name vendor -o -name .dart_tool -o -name .terraform -o -name .git \
@@ -2810,12 +3141,11 @@ _get_project_artifacts() {
 # genuine artifact directories adjacent to a project manifest can be removed.
 _is_valid_project_artifact() {
   local path="$1"
+  local expected_identity="${2:-}"
   case "$path" in
     /*) ;; *) return 1 ;;
   esac
-  case "$path" in
-    *..*) return 1 ;;
-  esac
+  case "$path" in */../*|*/..) return 1 ;; esac
   case "$path" in
     "$HOME"/*) ;; *) return 1 ;;
   esac
@@ -2823,14 +3153,10 @@ _is_valid_project_artifact() {
   case "|$_PROJECT_ARTIFACT_NAMES|" in
     *"|$base|"*) ;; *) return 1 ;;
   esac
-  [ -d "$path" ] || return 1
-  local parent; parent=$(dirname "$path")
-  local m
-  local IFS='|'
-  for m in $_PROJECT_MARKERS; do
-    [ -f "$parent/$m" ] && return 0
-  done
-  return 1
+  _validate_removal_path "$path" contents "Artifact: $path" || return 1
+  local actual_identity
+  actual_identity=$(_project_artifact_identity "$path") || return 1
+  [ -z "$expected_identity" ] || [ "$actual_identity" = "$expected_identity" ]
 }
 
 # Category scan_fn — sets this category's size from discovered artifacts.
@@ -2854,36 +3180,45 @@ clean_project_artifacts() {
       info "$(L no_artifact_specified)"
       return
     fi
-    local parsed=()
+    local parsed=() identities=()
     IFS=',' read -ra parsed <<< "$PROJECT_ARTIFACT_CLEAN"
-    local p
+    IFS=',' read -ra identities <<< "$PROJECT_ARTIFACT_IDENTITIES"
+    local p expected_identity artifact_index=0
     for p in "${parsed[@]}"; do
       p="${p## }"; p="${p%% }"
       [ -z "$p" ] && continue
-      if _is_valid_project_artifact "$p"; then
-        safe_rm "$p" "Artifact: $p"
+      expected_identity="${identities[$artifact_index]:-}"
+      artifact_index=$((artifact_index + 1))
+      if [ -n "$expected_identity" ] && \
+         _is_valid_project_artifact "$p" "$expected_identity"; then
+        safe_rm "$p" "Artifact: $p" "$expected_identity"
       else
         warn "$(L invalid_artifact): $p"
+        record_clean_error "$(L invalid_artifact): missing or changed scan identity: $p"
       fi
     done
     return
   fi
 
   # Interactive CLI mode: list each artifact and confirm individually.
-  local s label path sz_h
-  while IFS=$'\t' read -r s label path; do
+  local s label path identity sz_h
+  while IFS=$'\t' read -r s label path identity; do
     [ -n "$path" ] || continue
     sz_h=$(format_bytes "$s")
     if confirm "$label · $(basename "$(dirname "$path")") · $sz_h — sil?"; then
-      safe_rm "$path" "Artifact: $path"
+      if _is_valid_project_artifact "$path" "$identity"; then
+        safe_rm "$path" "Artifact: $path" "$identity"
+      else
+        warn "$(L invalid_artifact): $path"
+      fi
     fi
   done < <(_get_project_artifacts)
 }
 
 scan_project_artifacts_subitems_json() {
-  local first=true s label path sz_h esc_id esc_label esc_name proj_name orphaned mtime now days
+  local first=true s label path identity sz_h esc_id esc_label esc_name proj_name orphaned mtime now days
   now=$(date +%s)
-  while IFS=$'\t' read -r s label path; do
+  while IFS=$'\t' read -r s label path identity; do
     [ -n "$path" ] || continue
     sz_h=$(format_bytes "$s")
     proj_name=$(basename "$(dirname "$path")")
@@ -2895,7 +3230,7 @@ scan_project_artifacts_subitems_json() {
     esc_label=$(json_escape_str "$label")
     esc_name=$(json_escape_str "$proj_name")
     if [ "$first" = true ]; then first=false; else echo ","; fi
-    echo -n "        {\"id\": \"$esc_id\", \"name\": \"$esc_name\", \"type\": \"$esc_label\", \"path\": \"$esc_id\", \"size_bytes\": $s, \"size_human\": \"$sz_h\", \"days_since\": $days, \"is_orphaned\": $orphaned}"
+    echo -n "        {\"id\": \"$esc_id\", \"identity\": \"$identity\", \"name\": \"$esc_name\", \"type\": \"$esc_label\", \"path\": \"$esc_id\", \"size_bytes\": $s, \"size_human\": \"$sz_h\", \"days_since\": $days, \"is_orphaned\": $orphaned}"
   done < <(_get_project_artifacts)
 }
 
@@ -3101,7 +3436,9 @@ do_clean_launchagents() {
         # Route through safe_rm for exclusion/protected-path guards, trash-first
         # behaviour and the oplog audit trail. Capture its UI text so failures
         # carry a reason while the endpoint still emits valid JSON.
-        if out=$(safe_rm "$plist" "LaunchAgent: $(basename "$plist")" 2>&1); then
+        local before_items=$TOTAL_ITEMS
+        out=$(safe_rm "$plist" "LaunchAgent: $(basename "$plist")" 2>&1) || true
+        if [ "$TOTAL_ITEMS" -gt "$before_items" ]; then
           removed=$((removed + 1))
         else
           out=$(printf '%s' "$out" | tr '\n' ' ' | sed $'s/\x1b\\[[0-9;]*m//g')
@@ -3116,8 +3453,10 @@ do_clean_launchagents() {
     [ -n "$errors_json" ] && errors_json+=","
     errors_json+="\"$(json_escape_str "$e")\""
   done
-  printf '{"success":true,"removed":%d,"errors":%d,"error_details":[%s]}\n' \
-    "$removed" "${#err_msgs[@]}" "$errors_json"
+  local success_value=true
+  [ "${#err_msgs[@]}" -gt 0 ] && success_value=false
+  printf '{"success":%s,"removed":%d,"errors":%d,"error_details":[%s]}\n' \
+    "$success_value" "$removed" "${#err_msgs[@]}" "$errors_json"
 }
 
 do_thin_snapshots_json() {
@@ -3165,6 +3504,7 @@ do_scan_json() {
   cat <<ENDJSON
 {
   "success": true,
+  "plan_version": 1,
   "scan": {
 ENDJSON
   for i in "${!CAT_IDS[@]}"; do
@@ -3180,7 +3520,8 @@ ENDJSON
     echo "      \"size_human\": \"$sz_h\","
     echo "      \"needs_sudo\": $needs_sudo,"
     echo "      \"in_total\": $in_total,"
-    echo "      \"risk\": \"${CAT_RISKS[$i]}\""
+    echo "      \"risk\": \"${CAT_RISKS[$i]}\","
+    echo "      \"recovery\": \"$(cat_recovery "$id")\""
 
     if [ "$id" = "app_leftovers" ]; then
       echo "      ,\"subitems\": ["
@@ -3339,7 +3680,7 @@ do_clean_json() {
     IFS='|' read -r cat_id _ freed_h status <<< "$entry"
     local comma=","
     [ $((j + 1)) -eq ${#CLEAN_RESULTS[@]} ] && comma=""
-    echo "    {\"category\": \"$cat_id\", \"freed\": \"$freed_h\", \"status\": \"$status\"}${comma}"
+    echo "    {\"category\": \"$cat_id\", \"freed\": \"$freed_h\", \"status\": \"$status\", \"recovery\": \"$(cat_recovery "$cat_id")\"}${comma}"
     j=$((j + 1))
   done
 
@@ -3373,6 +3714,27 @@ do_clean_json() {
   echo '}'
 }
 
+do_clean_ids_json() {
+  local ids_csv="$1" ids=() id idx nums=""
+  IFS=',' read -ra ids <<< "$ids_csv"
+  for id in "${ids[@]}"; do
+    id="${id## }"; id="${id%% }"
+    [ -n "$id" ] || continue
+    idx=$(cat_index_by_id "$id")
+    if [ "$idx" -lt 0 ]; then
+      printf '{"success":false,"error":"unknown category id: %s"}\n' \
+        "$(json_escape_str "$id")"
+      return 1
+    fi
+    nums="${nums}${nums:+,}$((idx + 1))"
+  done
+  [ -n "$nums" ] || {
+    printf '{"success":false,"error":"no category ids supplied"}\n'
+    return 1
+  }
+  do_clean_json "$nums"
+}
+
 do_status_json() {
   cat <<ENDJSON
 {
@@ -3384,11 +3746,44 @@ do_status_json() {
 ENDJSON
 }
 
+do_remove_user_data() {
+  warn "This removes weekly scheduling, history, forecasts, and undo metadata."
+  if ! confirm "Move all Apple Cleanup user data to Trash?"; then
+    info "User data removal cancelled."
+    return 1
+  fi
+
+  local previous_no_oplog="${APPLE_CLEANUP_NO_OPLOG:-0}"
+  APPLE_CLEANUP_NO_OPLOG=1
+  _CURRENT_CATEGORY="user_data_reset"
+  _CURRENT_NEEDS_SUDO=0
+  _CURRENT_IS_TRASH_EMPTY=0
+  local before_errors; before_errors=$(clean_error_count)
+
+  local agent="$HOME/Library/LaunchAgents/com.cleanmac.weeklycleanup.plist"
+  if [ -e "$agent" ] || [ -L "$agent" ]; then
+    if command -v launchctl >/dev/null 2>&1; then
+      launchctl unload "$agent" >/dev/null 2>&1 || true
+    fi
+    safe_rm "$agent" "Weekly cleanup schedule"
+  fi
+  safe_rm "$HOME/.cache/apple-cleanup" "Apple Cleanup user data"
+
+  APPLE_CLEANUP_NO_OPLOG="$previous_no_oplog"
+  _CURRENT_CATEGORY=""
+  if [ "$(clean_error_count)" -gt "$before_errors" ]; then
+    err "Some Apple Cleanup user data could not be moved to Trash."
+    return 1
+  fi
+  success "Apple Cleanup user data was moved to Trash."
+}
+
 # ─── Main ────────────────────────────────────────────────────────────────────
 main() {
   local args=("$@")
   local i=0
   local clean_csv=""
+  local clean_ids_csv=""
   
   while [ $i -lt ${#args[@]} ]; do
     case "${args[$i]}" in
@@ -3404,6 +3799,10 @@ main() {
       --status-json)
         do_status_json
         exit 0
+        ;;
+      --remove-user-data)
+        do_remove_user_data
+        exit $?
         ;;
       --history)
         do_history
@@ -3421,6 +3820,11 @@ main() {
         i=$((i + 1))
         [ $i -ge ${#args[@]} ] && { echo "Missing value for --clean-json"; exit 1; }
         clean_csv="${args[$i]}"
+        ;;
+      --clean-ids-json)
+        i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --clean-ids-json"; exit 1; }
+        clean_ids_csv="${args[$i]}"
         ;;
       --clean-safe-json)
         # Non-interactive scheduled cleanup: clean only the no-sudo safe set.
@@ -3468,6 +3872,11 @@ main() {
         i=$((i + 1))
         [ $i -ge ${#args[@]} ] && { echo "Missing value for --project-artifact-sub"; exit 1; }
         PROJECT_ARTIFACT_CLEAN="${args[$i]}"
+        ;;
+      --project-artifact-identities)
+        i=$((i + 1))
+        [ $i -ge ${#args[@]} ] && { echo "Missing value for --project-artifact-identities"; exit 1; }
+        PROJECT_ARTIFACT_IDENTITIES="${args[$i]}"
         ;;
       --__noop)
         # Test hook: allow `source clean_mac.sh --__noop` to load functions
@@ -3521,6 +3930,7 @@ main() {
         echo -e "${BOLD}Web API:${NC}"
         echo "  --scan-json              Scan results as JSON"
         echo "  --clean-json 1,3,7       Clean specified categories, return JSON"
+        echo "  --clean-ids-json id,id   Clean stable category ids, return JSON"
         echo "  --app-leftovers 'd1,d2'  Leftover folder names to delete"
         echo "  --browser-full-sub 'c,s' Browser keys to reset (chrome, safari...)"
         echo "  --developer-sub 'd,b'    Developer sub-items (derived_data, broken_links...)"
@@ -3529,7 +3939,9 @@ main() {
         echo "  --app-uninstaller-path <p> Verified .app path to uninstall"
         echo "  --app-uninstaller-bundle-id <id> Bundle id captured before removal"
         echo "  --project-artifact-sub 'p1,p2' Project artifact paths to delete"
+        echo "  --project-artifact-identities 'i1,i2' Scan identities paired with project artifact paths"
         echo "  --status-json            System status as JSON"
+        echo "  --remove-user-data       Move schedule, history, forecasts, and undo metadata to Trash"
         echo "  --thin-snapshots-json    Thin local TM snapshots, return JSON"
         echo "  --ops-json               List restorable operations as JSON"
         echo "  --restore-session <id>   Restore all recoverable items in a run"
@@ -3542,7 +3954,8 @@ main() {
         echo ""
         echo "Env vars:"
         echo "  APPLE_CLEANUP_LANG       UI language (tr|en)"
-        echo "  APPLE_CLEANUP_FORCE_RM   Set to 1 to bypass trash-first (CI/testing)"
+        echo "  APPLE_CLEANUP_FORCE_RM   Test-only trash bypass; requires APPLE_CLEANUP_TEST_MODE=1 and a temporary HOME"
+        echo "  APPLE_CLEANUP_TEST_MODE  Enables test-only behavior in an isolated temporary HOME"
         echo "  APPLE_CLEANUP_DRYRUN     Set to 1 to preview only (deletes nothing)"
         echo "  APPLE_CLEANUP_EXCLUDE    Colon-separated paths/globs to protect"
         echo ""
@@ -3553,6 +3966,12 @@ main() {
     esac
     i=$((i + 1))
   done
+
+  # Stable-id API is preferred; numeric clean_csv remains for CLI compatibility.
+  if [ -n "$clean_ids_csv" ]; then
+    do_clean_ids_json "$clean_ids_csv"
+    exit $?
+  fi
 
   # If clean_csv was captured, run in JSON mode
   if [ -n "$clean_csv" ]; then

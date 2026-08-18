@@ -5,7 +5,7 @@
 -- Launches the Apple Cleanup dashboard with a double-click.
 -- Without typing a single line in Terminal, this file:
 --   1) Grants execute (+x) permission to the launcher scripts,
---   2) Clears the macOS quarantine attribute,
+--   2) Clears quarantine only from the two reviewed launcher files,
 --   3) Runs the background Internal_Launcher.command.
 --
 -- NOTE: After unzipping, on the FIRST launch RIGHT-CLICK this file -> "Open"
@@ -20,9 +20,11 @@ on run
 		set projectDir to do shell script "dirname " & quoted form of myPath
 		set launcher to projectDir & "/Internal_Launcher.command"
 
-		-- Fix permission + quarantine without using the Terminal
+		-- Fix permission + narrowly scoped quarantine without touching bundled
+		-- source, assets, or any future files copied into the project directory.
 		do shell script "chmod +x " & quoted form of myPath & " " & quoted form of launcher
-		do shell script "xattr -dr com.apple.quarantine " & quoted form of projectDir & " 2>/dev/null; true"
+		do shell script "xattr -d com.apple.quarantine " & quoted form of myPath & " 2>/dev/null; true"
+		do shell script "xattr -d com.apple.quarantine " & quoted form of launcher & " 2>/dev/null; true"
 
 		-- Start the server and browser via the background launcher
 		do shell script "open " & quoted form of launcher

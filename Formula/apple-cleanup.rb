@@ -56,6 +56,9 @@ class AppleCleanup < Formula
 
       If you enable weekly cleanup, its LaunchAgent also remains in:
         ~/Library/LaunchAgents/com.cleanmac.weeklycleanup.plist
+
+      To move those user-owned files to Trash before uninstalling, run:
+        apple-cleanup-cli --remove-user-data
     EOS
   end
 

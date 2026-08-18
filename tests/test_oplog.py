@@ -106,7 +106,8 @@ def test_force_rm_records_delete_action(tmp_path):
     victim = tmp_path / "Library" / "Caches" / "com.example.app"
     victim.mkdir(parents=True)
     (victim / "blob.bin").write_bytes(b"x" * 4096)
-    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_FORCE_RM="1")
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_FORCE_RM="1",
+               APPLE_CLEANUP_TEST_MODE="1")
     cmd = (f'source "{SCRIPT}" >/dev/null 2>&1; '
            f'safe_rm "{victim}" "Example" >/dev/null 2>&1; true')
     out = subprocess.run(["bash", "-c", cmd], env=env, capture_output=True, text=True, timeout=30)
@@ -157,6 +158,50 @@ def test_rotation_truncates_when_over_cap(tmp_path):
     assert len(new_cols) == 7, new_cols
     assert new_cols[4] == "/tmp/new"
     assert after_lines[0].split("\t")[0] != "0"
+
+
+def test_record_refuses_symlink_log_destination(tmp_path):
+    log = _log_path(tmp_path)
+    log.parent.mkdir(parents=True)
+    victim = tmp_path / "do-not-touch.txt"
+    victim.write_text("original")
+    log.symlink_to(victim)
+
+    _run_record(tmp_path, "delete", "10", "/tmp/item", "", "logs")
+
+    assert victim.read_text() == "original"
+    assert log.is_symlink()
+
+
+def test_record_uses_private_permissions(tmp_path):
+    _run_record(tmp_path, "delete", "10", "/tmp/item", "", "logs")
+    assert _log_path(tmp_path).stat().st_mode & 0o777 == 0o600
+    assert _log_path(tmp_path).parent.stat().st_mode & 0o777 == 0o700
+
+
+def test_trash_collision_with_broken_symlink_is_not_overwritten(tmp_path):
+    trash = tmp_path / ".Trash"
+    trash.mkdir()
+    collision = trash / "victim"
+    collision.symlink_to(tmp_path / "missing")
+    source = tmp_path / "Library/Caches/victim"
+    source.mkdir(parents=True)
+    (source / "data").write_text("payload")
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_NO_OPLOG="1")
+    command = (
+        f'source "{SCRIPT}" --__noop; '
+        'osascript() { return 1; }; '
+        f'_trash_item "{source}"'
+    )
+    out = subprocess.run(
+        ["bash", "-c", command], env=env,
+        capture_output=True, text=True, timeout=10,
+    )
+    assert out.returncode == 0, out.stderr
+    destination = Path(out.stdout.strip())
+    assert collision.is_symlink()
+    assert destination != collision
+    assert (destination / "data").read_text() == "payload"
 
 
 def test_history_json_empty_is_array(tmp_path):

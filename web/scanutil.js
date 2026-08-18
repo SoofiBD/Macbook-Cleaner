@@ -48,6 +48,7 @@
           ageDays: Number.isFinite(sub.age_days) ? sub.age_days
                    : (Number.isFinite(sub.days_since) ? sub.days_since : null),
           path: sub.path || '',
+          identity: sub.identity || '',
           risk: info.risk || '',
           isOrphaned: !!sub.is_orphaned,
           safety,
@@ -105,14 +106,19 @@
       app_uninstaller_selected: [],
       project_artifacts_selected: [],
     };
-    const idxSet = new Set();
+    const categorySet = new Set();
     for (const r of selectedRows) {
       const bucket = r.catKey + '_selected';
-      if (Array.isArray(payload[bucket])) payload[bucket].push(r.id);
-      const idx = indexByKey[r.catKey];
-      if (idx != null) idxSet.add(idx);
+      if (Array.isArray(payload[bucket])) {
+        if (r.catKey === 'project_artifacts') {
+          if (r.identity) payload[bucket].push({ path: r.id, identity: r.identity });
+        } else {
+          payload[bucket].push(r.id);
+        }
+      }
+      if (indexByKey[r.catKey] != null) categorySet.add(r.catKey);
     }
-    payload.categories = Array.from(idxSet);
+    payload.categories = Array.from(categorySet);
     return payload;
   }
 

@@ -134,7 +134,16 @@ class TestCategoryValidation(unittest.TestCase):
         self.v = _coerce_categories
 
     def test_accepts_integer_and_digit_string_ids(self):
-        self.assertEqual(self.v([1, "11", 17]), [1, 11, 17])
+        self.assertEqual(
+            self.v([1, "11", 17]),
+            ["user_cache", "app_uninstaller", "project_artifacts"],
+        )
+
+    def test_accepts_stable_category_ids(self):
+        self.assertEqual(
+            self.v(["user_cache", "project_artifacts"]),
+            ["user_cache", "project_artifacts"],
+        )
 
     def test_rejects_out_of_range_duplicate_and_boolean_ids(self):
         self.assertIsNone(self.v([0]))
@@ -232,6 +241,29 @@ class TestValidateProjectArtifact(unittest.TestCase):
         self.assertFalse(self.v("node_modules"))
         self.assertFalse(self.v(""))
         self.assertFalse(self.v(None))
+
+    def test_selection_requires_scan_identity(self):
+        from server import _validate_project_artifact_selection
+        identity = "1:2:3:4:5:6:package.json"
+        self.assertTrue(_validate_project_artifact_selection({
+            "path": "/Users/x/Code/app/node_modules",
+            "identity": identity,
+        }))
+        self.assertFalse(_validate_project_artifact_selection({
+            "path": "/Users/x/Code/app/node_modules",
+        }))
+        self.assertFalse(_validate_project_artifact_selection({
+            "path": "/Users/x/Code/app/node_modules",
+            "identity": "../../bad",
+        }))
+
+
+class TestProtectedBundlePolicy(unittest.TestCase):
+    def test_all_apple_bundle_ids_are_protected(self):
+        from server import _is_protected_bundle_id
+        self.assertTrue(_is_protected_bundle_id("com.apple.Safari"))
+        self.assertTrue(_is_protected_bundle_id("com.apple.FutureSystemApp"))
+        self.assertFalse(_is_protected_bundle_id("com.example.App"))
 
 
 class TestDeveloperWhitelistSync(unittest.TestCase):
@@ -516,7 +548,7 @@ class TestRunScriptResilience(unittest.TestCase):
         handler = server.CleanupHandler.__new__(server.CleanupHandler)
         completed = SimpleNamespace(
             stdout='{"success": true}', stderr="", returncode=0)
-        with patch.object(server.subprocess, "run", return_value=completed) as run:
+        with patch.object(server, "_run_process", return_value=completed) as run:
             data, err = handler._run_script(
                 ["--status-json"], env_extra={"APPLE_CLEANUP_LANG": "tr"})
 

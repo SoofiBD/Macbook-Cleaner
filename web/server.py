@@ -20,8 +20,11 @@ import plistlib
 import re
 import secrets
 import shutil
+import signal
+import stat
 import subprocess
 import sys
+import tempfile
 import threading
 import time
 import urllib.parse
@@ -63,11 +66,47 @@ MAX_BODY_SIZE = 1 * 1024 * 1024  # 1,048,576 bytes
 # to predict when the disk will fill.
 HISTORY_FILE = os.path.expanduser("~/.cache/apple-cleanup/usage_history.json")
 _history_lock = threading.Lock()
+_scan_lock = threading.Lock()
 _launch_agent_lock = threading.Lock()
 _operation_lock = threading.Lock()
+_scan_cache = {"at": 0.0, "data": None}
+SCAN_CACHE_SECONDS = 30
+
+
+def _invalidate_scan_cache():
+    with _scan_lock:
+        _scan_cache["at"] = 0.0
+        _scan_cache["data"] = None
 MAX_HISTORY_DAYS = 90
 SNAPSHOT_INTERVAL = 3600           # seconds between recorded snapshots
 FORECAST_HORIZON_DAYS = 365        # don't report a forecast beyond a year
+
+
+def _run_process(cmd, *, timeout, cwd=None, env=None):
+    """Run argv in its own process group and reap the whole group on timeout."""
+    process = subprocess.Popen(
+        cmd,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        cwd=cwd,
+        env=env,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+            process.communicate(timeout=2)
+        except (ProcessLookupError, subprocess.TimeoutExpired):
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            process.communicate()
+        raise
+    return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
 
 
 def _exclusive_operation(method):
@@ -80,6 +119,7 @@ def _exclusive_operation(method):
         try:
             return method(self, *args, **kwargs)
         finally:
+            _invalidate_scan_cache()
             _operation_lock.release()
     return wrapped
 
@@ -107,13 +147,50 @@ def _load_history():
 def _save_history(history):
     """Persist usage history; failures are non-fatal."""
     try:
-        os.makedirs(os.path.dirname(HISTORY_FILE), exist_ok=True)
-        tmp = HISTORY_FILE + ".tmp"
-        with open(tmp, "w") as f:
-            json.dump([[t, u] for t, u in history], f)
-        os.replace(tmp, HISTORY_FILE)
+        path = Path(HISTORY_FILE)
+        _ensure_private_directory(path.parent)
+        _atomic_write(path, lambda f: json.dump(
+            [[t, u] for t, u in history], f), binary=False)
     except OSError:
         pass
+
+
+def _ensure_private_directory(path: Path):
+    """Create a user-owned, non-symlink state directory with mode 0700."""
+    path.mkdir(parents=True, exist_ok=True, mode=0o700)
+    info = path.lstat()
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+        raise OSError(f"unsafe state directory: {path}")
+    if hasattr(os, "getuid") and info.st_uid != os.getuid():
+        raise OSError(f"state directory is not owned by current user: {path}")
+    path.chmod(0o700)
+
+
+def _atomic_write(path: Path, writer, *, binary: bool):
+    """Write a private file in-place using an exclusive same-dir temp file."""
+    path = Path(path)
+    if path.is_symlink():
+        raise OSError(f"refusing symlink destination: {path}")
+    fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        os.fchmod(fd, 0o600)
+        mode = "wb" if binary else "w"
+        kwargs = {} if binary else {"encoding": "utf-8"}
+        with os.fdopen(fd, mode, **kwargs) as handle:
+            writer(handle)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(tmp_name, path)
+    except Exception:
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+        try:
+            os.unlink(tmp_name)
+        except OSError:
+            pass
+        raise
 
 
 def _record_snapshot(history, used_bytes, now=None):
@@ -256,6 +333,12 @@ _APP_NAME_RE     = re.compile(r'^[A-Za-z0-9][A-Za-z0-9 ._-]{0,63}$')
 # (the slash appears in tap-qualified names like "homebrew/cask/foo").
 _BREW_NAME_RE    = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._@/-]{0,127}$')
 _BUNDLE_ID_RE    = re.compile(r'^[A-Za-z0-9][A-Za-z0-9._-]{1,254}$')
+_PROJECT_IDENTITY_RE = re.compile(
+    r'^\d+:\d+:\d+:\d+:\d+:\d+:'
+    r'(?:package\.json|Cargo\.toml|Package\.swift|go\.mod|build\.gradle|'
+    r'build\.gradle\.kts|pom\.xml|composer\.json|pubspec\.yaml|'
+    r'CMakeLists\.txt|main\.tf)$'
+)
 
 # Developer sub-item whitelist — MUST be 100% in sync with clean_mac.sh
 # Corresponds to the case statement in clean_developer() JSON mode
@@ -369,8 +452,16 @@ def _validate_bundle_id(value: str) -> bool:
         and ".." not in value
 
 
+_CATEGORY_IDS = (
+    "user_cache", "system_cache", "app_leftovers", "logs", "temp_files",
+    "developer", "trash", "browser_cache", "browser_full", "ios_backups",
+    "app_uninstaller", "mail_downloads", "diagnostic_reports",
+    "quicklook_cache", "saved_app_state", "other_trash", "project_artifacts",
+)
+
+
 def _coerce_categories(value):
-    """Return unique 1..17 category ids, or None for a malformed request."""
+    """Return unique stable category ids; accept legacy 1..17 inputs."""
     if not isinstance(value, list) or not value or len(value) > 17:
         return None
     categories = []
@@ -378,13 +469,20 @@ def _coerce_categories(value):
     for raw in value:
         if isinstance(raw, bool):
             return None
-        if isinstance(raw, int):
+        if isinstance(raw, str) and raw in _CATEGORY_IDS:
             category = raw
+        elif isinstance(raw, int):
+            if not 1 <= raw <= len(_CATEGORY_IDS):
+                return None
+            category = _CATEGORY_IDS[raw - 1]
         elif isinstance(raw, str) and raw.isdigit():
-            category = int(raw)
+            number = int(raw)
+            if not 1 <= number <= len(_CATEGORY_IDS):
+                return None
+            category = _CATEGORY_IDS[number - 1]
         else:
             return None
-        if not 1 <= category <= 17 or category in seen:
+        if category in seen:
             return None
         seen.add(category)
         categories.append(category)
@@ -399,20 +497,9 @@ _PROJECT_ARTIFACT_NAMES = frozenset({
     "vendor", ".dart_tool", ".terraform",
 })
 
-# Exact protected bundle ids, intentionally narrower than a blanket
-# `com.apple.*` rule so third-party/developer tools are not misclassified.
-_PROTECTED_APP_BUNDLE_IDS = frozenset({
-    "com.apple.finder", "com.apple.Safari", "com.apple.mail",
-    "com.apple.Terminal", "com.apple.systempreferences",
-    "com.apple.ActivityMonitor", "com.apple.Console",
-    "com.apple.DiskUtility", "com.apple.dt.Xcode", "com.apple.AppStore",
-    "com.apple.iCal", "com.apple.AddressBook", "com.apple.Preview",
-    "com.apple.TextEdit", "com.apple.calculator", "com.apple.Dictionary",
-    "com.apple.Maps", "com.apple.Notes", "com.apple.reminders",
-    "com.apple.Stickies", "com.apple.VoiceMemos", "com.apple.stocks",
-    "com.apple.weather", "com.apple.Passwords", "com.apple.FaceTime",
-    "com.apple.MobileSMS", "com.apple.Photos", "com.apple.Music",
-})
+def _is_protected_bundle_id(bundle_id: str) -> bool:
+    """Fail closed for Apple-owned bundle identifiers."""
+    return isinstance(bundle_id, str) and bundle_id.startswith("com.apple.")
 
 
 def _application_roots():
@@ -610,7 +697,7 @@ def discover_applications():
             "source": source,
             "bundle_id": bundle_id,
             "version": version,
-            "protected": bundle_id in _PROTECTED_APP_BUNDLE_IDS,
+            "protected": _is_protected_bundle_id(bundle_id),
         })
 
     caskroom = Path("/opt/homebrew/Caskroom")
@@ -662,6 +749,17 @@ def _validate_project_artifact(path: str) -> bool:
         and ".." not in path
         and "," not in path
         and os.path.basename(path.rstrip("/")) in _PROJECT_ARTIFACT_NAMES
+    )
+
+
+def _validate_project_artifact_selection(value) -> bool:
+    """Validate the path plus scan-time filesystem identity transport shape."""
+    return (
+        isinstance(value, dict)
+        and set(value) == {"path", "identity"}
+        and _validate_project_artifact(value.get("path"))
+        and isinstance(value.get("identity"), str)
+        and _PROJECT_IDENTITY_RE.fullmatch(value["identity"]) is not None
     )
 
 
@@ -800,16 +898,18 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         """
         cmd = ["bash", str(SCRIPT_PATH)] + args
         run_env = dict(os.environ)
+        # Never inherit test-only permanent-delete controls into dashboard
+        # cleanup processes. The web API intentionally exposes no equivalent.
+        run_env.pop("APPLE_CLEANUP_FORCE_RM", None)
+        run_env.pop("APPLE_CLEANUP_TEST_MODE", None)
         if env_extra:
             run_env.update(env_extra)
         # The dashboard is English-only. Do not let the parent shell's locale
         # or APPLE_CLEANUP_LANG setting produce mixed-language API messages.
         run_env["APPLE_CLEANUP_LANG"] = "en"
         try:
-            result = subprocess.run(
+            result = _run_process(
                 cmd,
-                capture_output=True,
-                text=True,
                 timeout=timeout,
                 cwd=str(SCRIPT_PATH.parent),
                 env=run_env,
@@ -899,7 +999,16 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         # Scanning walks many large cache/log trees with `du`; on fuller or
         # slower machines this easily exceeds the default 120s. Give it room
         # so a legitimately slow scan doesn't surface as a server error.
-        data, err = self._run_script(["--scan-json"], timeout=600)
+        with _scan_lock:
+            now = time.monotonic()
+            if (_scan_cache["data"] is not None
+                    and now - _scan_cache["at"] < SCAN_CACHE_SECONDS):
+                self._send_json(_scan_cache["data"])
+                return
+            data, err = self._run_script(["--scan-json"], timeout=600)
+            if not err:
+                _scan_cache["data"] = data
+                _scan_cache["at"] = time.monotonic()
         if err:
             self._send_error_json(f"Scan error: {err}")
         else:
@@ -973,12 +1082,12 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         safe_cats = _coerce_categories(payload.get("categories"))
         if safe_cats is None:
             self._send_error_json(
-                "categories must contain unique integers from 1 through 17", 400
+                "categories must contain unique stable category ids", 400
             )
             return
 
-        cat_str = ",".join(str(c) for c in safe_cats)
-        args = ["--clean-json", cat_str]
+        cat_str = ",".join(safe_cats)
+        args = ["--clean-ids-json", cat_str]
 
         # App leftovers sub-items
         app_leftovers_selected = payload.get("app_leftovers_selected", [])
@@ -1020,13 +1129,17 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             if safe:
                 args += ["--app-uninstaller-sub", ",".join(safe)]
 
-        # Project artifact sub-items (paths validated; comma-separated)
+        # Project artifact sub-items. The shell revalidates the scan-time
+        # device/inode tuple immediately before moving the target to Trash.
         project_artifacts_selected = payload.get("project_artifacts_selected", [])
         if project_artifacts_selected and isinstance(project_artifacts_selected, list):
-            safe = [x for x in project_artifacts_selected
-                    if _validate_project_artifact(x)]
+            selected = [x for x in project_artifacts_selected
+                        if _validate_project_artifact_selection(x)]
+            safe = [x["path"] for x in selected]
+            identities = [x["identity"] for x in selected]
             if safe:
                 args += ["--project-artifact-sub", ",".join(safe)]
+                args += ["--project-artifact-identities", ",".join(identities)]
 
         data, err = self._run_script(args, env_extra=_extra_env_for_clean(payload))
         if err:
@@ -1090,7 +1203,10 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         if err:
             self._send_error_json(err, 400)
             return
-        enable = bool(payload.get("enabled", False))
+        enable = payload.get("enabled")
+        if not isinstance(enable, bool):
+            self._send_error_json("enabled must be a boolean", 400)
+            return
         try:
             with _launch_agent_lock:
                 if enable:
@@ -1105,7 +1221,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
 
     def _install_weekly_agent(self):
         """Write the .plist and (best-effort) load it into launchd."""
-        LAUNCH_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
+        _ensure_private_directory(LAUNCH_AGENTS_DIR)
         plist = {
             "Label": LAUNCH_AGENT_LABEL,
             # Runs the script's own no-sudo safe cleanup; the script decides
@@ -1120,9 +1236,12 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             "StandardErrorPath": os.path.expanduser(
                 "~/.cache/apple-cleanup/weekly-cleanup.log"),
         }
-        os.makedirs(os.path.expanduser("~/.cache/apple-cleanup"), exist_ok=True)
-        with open(LAUNCH_AGENT_PLIST, "wb") as f:
-            plistlib.dump(plist, f)
+        _ensure_private_directory(Path(os.path.expanduser("~/.cache/apple-cleanup")))
+        _atomic_write(
+            LAUNCH_AGENT_PLIST,
+            lambda handle: plistlib.dump(plist, handle),
+            binary=True,
+        )
         # Reload so changes take effect now; ignore failures (e.g. headless).
         subprocess.run(["launchctl", "unload", str(LAUNCH_AGENT_PLIST)],
                        capture_output=True, timeout=15)
@@ -1138,7 +1257,7 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
 
     def _run_cmd(self, cmd, timeout=60):
         try:
-            res = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+            res = _run_process(cmd, timeout=timeout)
             return res.returncode == 0, res.stdout, res.stderr
         except subprocess.TimeoutExpired:
             return False, "", "Command timed out"
