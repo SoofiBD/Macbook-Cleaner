@@ -62,7 +62,9 @@ _project_artifact_identity() {
     type_info=$(_artifact_type_for_marker "$marker")
     artifact_name="${type_info##* }"
     [ "$artifact_name" = "$base" ] || continue
-    [ -f "$parent/$marker" ] && [ ! -L "$parent/$marker" ] || continue
+    if [ ! -f "$parent/$marker" ] || [ -L "$parent/$marker" ]; then
+      continue
+    fi
     artifact_id=$(_file_identity "$path") || return 1
     parent_id=$(_file_identity "$parent") || return 1
     marker_id=$(_file_identity "$parent/$marker") || return 1

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Apple Cleanup Web Dashboard — HTTP Server (v2.0.0)
+Apple Cleanup Web Dashboard — HTTP Server
 Serves the web UI and proxies API requests to clean_mac.sh
 
 Security features:
@@ -50,6 +50,23 @@ def _get_script_path():
 
 
 SCRIPT_PATH = _get_script_path()
+
+
+def _read_app_version(script_path):
+    """Read the canonical SemVer from clean_mac.sh without executing it."""
+    try:
+        source = Path(script_path).read_text(encoding="utf-8")
+    except OSError:
+        return "unknown"
+    match = re.search(
+        r'^VERSION="([0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?)"$',
+        source,
+        re.MULTILINE,
+    )
+    return match.group(1) if match else "unknown"
+
+
+APP_VERSION = _read_app_version(SCRIPT_PATH)
 
 # ── Weekly automatic cleanup (launchd) ───────────────────────────────────────
 # A user LaunchAgent that runs the no-sudo safe cleanup once a week. It runs as
@@ -276,6 +293,7 @@ def compute_forecast(history, total_bytes, used_bytes):
 # embedded into the served index.html; destructive endpoints require it.
 SESSION_TOKEN = secrets.token_urlsafe(32)
 TOKEN_PLACEHOLDER = "__CLEANUP_TOKEN__"
+VERSION_PLACEHOLDER = "__APPLE_CLEANUP_VERSION__"
 
 # Loopback host names accepted in the Host / Origin headers. Anything else is
 # rejected to defeat DNS-rebinding attacks against the loopback binding.
@@ -1720,6 +1738,10 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
                     TOKEN_PLACEHOLDER.encode("utf-8"),
                     SESSION_TOKEN.encode("utf-8"),
                 )
+                data = data.replace(
+                    VERSION_PLACEHOLDER.encode("utf-8"),
+                    APP_VERSION.encode("utf-8"),
+                )
             self.send_response(200)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(data)))
@@ -1772,7 +1794,7 @@ def _bind_server():
 
 def main():
     server = _bind_server()
-    print(f"🍎 Apple Cleanup Dashboard v2.0.0")
+    print(f"🍎 Apple Cleanup Dashboard v{APP_VERSION}")
     print(f"   http://localhost:{PORT}  (loopback only)")
     print(f"   Press Ctrl+C to stop\n")
     # Open the browser shortly after the server starts accepting connections.

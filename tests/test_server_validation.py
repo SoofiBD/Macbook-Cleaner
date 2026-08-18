@@ -16,6 +16,20 @@ class TestScriptPath(unittest.TestCase):
         with patch.dict(os.environ, {"APPLE_CLEANUP_SCRIPT_PATH": configured}):
             self.assertEqual(str(_get_script_path()), configured)
 
+    def test_dashboard_reads_the_canonical_script_version(self):
+        from server import APP_VERSION, SCRIPT_PATH
+
+        source = SCRIPT_PATH.read_text(encoding="utf-8")
+        self.assertIn(f'VERSION="{APP_VERSION}"', source)
+        self.assertEqual(APP_VERSION, "2.1.0")
+
+    def test_dashboard_footer_uses_runtime_version_placeholder(self):
+        from server import VERSION_PLACEHOLDER
+
+        index = os.path.join(os.path.dirname(__file__), '..', 'web', 'index.html')
+        with open(index, encoding="utf-8") as handle:
+            self.assertIn(VERSION_PLACEHOLDER, handle.read())
+
 
 class TestValidateAppLeftover(unittest.TestCase):
     def setUp(self):

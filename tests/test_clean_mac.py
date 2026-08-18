@@ -9,6 +9,15 @@ REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / "clean_mac.sh"
 
 
+def test_cli_reports_current_release_version():
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--version"],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip() == "2.1.0"
+
+
 def run_scan(home: Path) -> dict:
     """clean_mac.sh --scan-json'u izole bir HOME ile çalıştır, JSON döndür."""
     env = dict(os.environ, HOME=str(home))
