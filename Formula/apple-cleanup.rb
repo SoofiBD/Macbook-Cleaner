@@ -1,8 +1,8 @@
 class AppleCleanup < Formula
   desc "Safe macOS cleanup tool with terminal and local web interfaces"
   homepage "https://github.com/SoofiBD/Macbook-Cleaner"
-  url "https://github.com/SoofiBD/Macbook-Cleaner/archive/refs/tags/v2.0.0.tar.gz"
-  sha256 "6d3abe5ae4884b54f8e582d3130f4c49f56e0dffac6352f4e26086edd650bbcd"
+  url "https://github.com/SoofiBD/Macbook-Cleaner/archive/refs/tags/v2.1.0.tar.gz"
+  sha256 "cde176e74c51857d94202ad2658b9000ebab832da6ffda4f4ac19e80d3986998"
   license "MIT"
 
   depends_on :macos
