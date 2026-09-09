@@ -1081,3 +1081,7 @@ input:checked + .switch-slider:before {
   .app-content { padding: 20px 16px 80px; }
   .terminal-drawer { width: 100%; right: 0; }
 }
+
+.file-scan-card { padding: 24px; }
+.file-scan-card p { margin: 16px 0; line-height: 1.5; }
+.file-scan-path { overflow-wrap: anywhere; min-width: 160px; }

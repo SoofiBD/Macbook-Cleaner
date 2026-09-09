@@ -123,8 +123,33 @@
     return payload;
   }
 
+  function buildSelectedCleanPayload(data, categories, selectedSubitems) {
+    const scan = data?.scan || {};
+    const payload = { categories: [] };
+    for (const key of categories) {
+      const info = scan[key];
+      if (!info) throw new Error(`Category unavailable: ${key}. Scan again.`);
+      if (FILELIST_CATEGORIES.includes(key)) {
+        if (!Array.isArray(info.subitems)) throw new Error(`Item list unavailable in ${key}. Scan again.`);
+        const selection = selectedSubitems[key] || new Set();
+        const items = info.subitems.filter(item => selection.has(item.id));
+        if (!items.length) throw new Error(`Select at least one item in ${key}.`);
+        payload[key + '_selected'] = items.map(item => {
+          if (key === 'project_artifacts' || key === 'installer_artifacts') {
+            if (!item.identity) throw new Error(`File identity missing in ${key}. Scan again.`);
+            return { path: item.id, identity: item.identity };
+          }
+          return item.id;
+        });
+      }
+      payload.categories.push(key);
+    }
+    if (!payload.categories.length) throw new Error('No available categories selected.');
+    return payload;
+  }
+
   return {
     FILELIST_CATEGORIES, computeTotalBytes,
-    flattenScan, sortRows, filterRows, selectedTotalBytes, buildCleanPayload,
+    flattenScan, sortRows, filterRows, selectedTotalBytes, buildCleanPayload, buildSelectedCleanPayload,
   };
 });

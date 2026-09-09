@@ -34,6 +34,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from pathlib import Path
 
+from file_scanner import scan_files
+
 # Bind to loopback only — this API can delete files and must never be
 # reachable from the local network.
 HOST = "127.0.0.1"
@@ -86,6 +88,7 @@ MAX_BODY_SIZE = 1 * 1024 * 1024  # 1,048,576 bytes
 HISTORY_FILE = os.path.expanduser("~/.cache/apple-cleanup/usage_history.json")
 _history_lock = threading.Lock()
 _scan_lock = threading.Lock()
+_file_scan_lock = threading.Lock()
 _scan_cancel_event = threading.Event()
 _scan_running_event = threading.Event()
 _launch_agent_lock = threading.Lock()
@@ -468,12 +471,12 @@ def _validate_app_leftover(name: str) -> bool:
 
 def _validate_developer_item(item: str) -> bool:
     """Validate a developer sub-item key against the whitelist."""
-    return item in _DEVELOPER_WHITELIST
+    return isinstance(item, str) and item in _DEVELOPER_WHITELIST
 
 
 def _validate_browser_key(key: str) -> bool:
     """Validate a browser key against the whitelist."""
-    return key in _BROWSER_WHITELIST
+    return isinstance(key, str) and key in _BROWSER_WHITELIST
 
 
 def _validate_app_name(name: str) -> bool:
@@ -1231,6 +1234,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         # API endpoints
         if path == "/api/scan":
             self._handle_scan()
+        elif path in {"/api/large-files", "/api/duplicates"}:
+            self._handle_file_scan("large" if path == "/api/large-files" else "duplicates")
         elif path == "/api/status":
             self._handle_status()
         elif path == "/api/health":
@@ -1278,6 +1283,16 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             self._send_error_json("Not found", 404)
 
     # ── API Handlers ────────────────────────────────────────
+    def _handle_file_scan(self, kind):
+        if not _file_scan_lock.acquire(blocking=False):
+            return self._send_error_json("A file scan is already running; try again shortly", 409)
+        try:
+            self._send_json(scan_files(kind))
+        except OSError:
+            self._send_error_json("Could not read the user directory")
+        finally:
+            _file_scan_lock.release()
+
     def _handle_scan(self):
         # Each category runs in its own bounded process. A single slow cache or
         # unavailable tool therefore produces a partial scan instead of losing
@@ -1412,6 +1427,26 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
                 "categories must contain unique stable category ids", 400
             )
             return
+
+        validators = {
+            "app_leftovers": _validate_app_leftover,
+            "browser_full": _validate_browser_key,
+            "developer": _validate_developer_item,
+            "ios_backups": lambda x: isinstance(x, str) and bool(_UUID_RE.fullmatch(x)),
+            "app_uninstaller": _validate_app_name,
+            "project_artifacts": _validate_project_artifact_selection,
+            "installer_artifacts": _validate_installer_artifact_selection,
+        }
+        for category, validate in validators.items():
+            key = category + "_selected"
+            if key not in payload:
+                continue
+            selection = payload[key]
+            if (not isinstance(selection, list)
+                    or (category in safe_cats and not selection)
+                    or any(not validate(item) for item in selection)):
+                self._send_error_json(f"Invalid or empty selection for {category}", 400)
+                return
 
         cat_str = ",".join(safe_cats)
         args = ["--clean-ids-json", cat_str]

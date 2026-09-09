@@ -741,3 +741,60 @@ class TestProcessCancellation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestExplicitCleanupSelections(unittest.TestCase):
+    def test_bad_explicit_selection_never_falls_back_to_category_cleanup(self):
+        import server
+        from unittest.mock import Mock
+        for category, selection in [
+            ('developer', []), ('developer', ['invalid']),
+            ('developer', [{}]), ('browser_full', 'chrome'),
+            ('app_leftovers', ['Slack', '../unsafe']),
+            ('project_artifacts', []), ('installer_artifacts', None),
+        ]:
+            with self.subTest(category=category, selection=selection):
+                handler = server.CleanupHandler.__new__(server.CleanupHandler)
+                handler._read_json_body = Mock(return_value=({
+                    'categories': [category], category + '_selected': selection,
+                }, None))
+                handler._run_script = Mock()
+                handler._send_error_json = Mock()
+                handler._handle_clean()
+                handler._run_script.assert_not_called()
+                self.assertEqual(handler._send_error_json.call_args.args[1], 400)
+
+    def test_selected_category_uses_stable_id_and_selected_items(self):
+        import server
+        from unittest.mock import Mock
+        handler = server.CleanupHandler.__new__(server.CleanupHandler)
+        handler._read_json_body = Mock(return_value=({
+            'categories': ['developer'], 'developer_selected': ['npm_cache'],
+            'dry_run': True,
+        }, None))
+        handler._run_script = Mock(return_value=({'success': True}, None))
+        handler._send_json = Mock()
+        handler._handle_clean()
+        self.assertEqual(handler._run_script.call_args.args[0], [
+            '--clean-ids-json', 'developer', '--developer-sub', 'npm_cache',
+        ])
+
+
+class TestFileScanRoute(unittest.TestCase):
+    def test_routes_use_live_scanner_and_reject_overlapping_scan(self):
+        import server
+        from unittest.mock import Mock
+        for route, kind in [('/api/large-files', 'large'), ('/api/duplicates', 'duplicates')]:
+            handler = server.CleanupHandler.__new__(server.CleanupHandler)
+            handler.path = route
+            handler._require_loopback_host = Mock(return_value=True)
+            handler._send_json = Mock()
+            handler._send_error_json = Mock()
+            with patch.object(server, 'scan_files', return_value={'results': []}) as scan:
+                handler.do_GET()
+                scan.assert_called_once_with(kind)
+                handler._send_json.assert_called_once_with({'results': []})
+                with server._file_scan_lock:
+                    handler.do_GET()
+                self.assertEqual(scan.call_count, 1)
+                self.assertEqual(handler._send_error_json.call_args.args[1], 409)

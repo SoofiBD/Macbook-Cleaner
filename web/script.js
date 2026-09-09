@@ -11,110 +11,114 @@
      ══════════════════════════════════════════════════════════ */
   const CATEGORIES = [
     {
-      key: 'user_cache', index: 1, name: 'User Caches',
+      key: 'user_cache', name: 'User Caches',
       desc: 'Application temporary cache files (~/Library/Caches)',
       risk: 'safe', icon: 'ic-sparkles', color: 'var(--cat-cache)',
       defaultChecked: true, tags: [{ label: 'Safe to remove', type: 'safe' }]
     },
     {
-      key: 'system_cache', index: 2, name: 'System Caches',
+      key: 'system_cache', name: 'System Caches',
       desc: 'System-level caches (/Library/Caches)',
       risk: 'caution', icon: 'ic-wrench', color: 'var(--cat-system)',
       defaultChecked: false, tags: [{ label: 'Rebuilt automatically', type: 'caution' }]
     },
     {
-      key: 'logs', index: 3, name: 'System & User Logs',
+      key: 'logs', name: 'System & User Logs',
       desc: 'Crash logs, diagnostics, and diagnostic reports',
       risk: 'safe', icon: 'ic-sparkles', color: 'var(--cat-logs)',
       defaultChecked: true, tags: [{ label: 'Safe to remove', type: 'safe' }]
     },
     {
-      key: 'temp_files', index: 4, name: 'Temporary Files',
+      key: 'temp_files', name: 'Temporary Files',
       desc: 'Old temporary items in /tmp and /var/folders',
       risk: 'safe', icon: 'ic-sparkles', color: 'var(--cat-temp)',
       defaultChecked: true, tags: [{ label: 'Safe to remove', type: 'safe' }]
     },
     {
-      key: 'xcode', index: 5, name: 'Xcode Derived Data & Archives',
-      desc: 'Build caches, DerivedData, iOS DeviceSupport',
+      key: 'diagnostic_reports', name: 'Diagnostic Reports',
+      desc: 'Crash reports and diagnostic data',
       risk: 'safe', icon: 'ic-wrench', color: 'var(--cat-xcode)',
-      defaultChecked: true, tags: [{ label: 'Dev cache', type: 'safe' }]
+      defaultChecked: true, tags: [{ label: 'Diagnostic data', type: 'safe' }]
     },
     {
-      key: 'mail_downloads', index: 6, name: 'Mail Attachments & Downloads',
+      key: 'mail_downloads', name: 'Mail Attachments & Downloads',
       desc: 'Cached copies of opened email attachments',
       risk: 'caution', icon: 'ic-hard-drive', color: 'var(--cat-mail)',
       defaultChecked: false, tags: [{ label: 'Caution', type: 'caution' }]
     },
     {
-      key: 'browser_cache', index: 7, name: 'Browser Caches',
+      key: 'browser_cache', name: 'Browser Caches',
       desc: 'Safari, Chrome, Edge, Firefox cached web data',
       risk: 'safe', icon: 'ic-sparkles', color: 'var(--cat-browser)',
       defaultChecked: true, tags: [{ label: 'Fast reload cache', type: 'safe' }]
     },
     {
-      key: 'browser_full', index: 8, name: 'Complete Browser Data',
+      key: 'browser_full', name: 'Complete Browser Data',
       desc: 'Cookies, history, and stored session data',
       risk: 'danger', icon: 'ic-alert-triangle', color: 'var(--danger)',
       defaultChecked: false, tags: [{ label: 'Permanent / Logouts', type: 'danger' }]
     },
     {
-      key: 'trash', index: 9, name: 'Main User Trash',
+      key: 'trash', name: 'Main User Trash',
       desc: 'Items in your macOS ~/.Trash folder',
-      risk: 'caution', icon: 'ic-trash', color: 'var(--cat-trash)',
-      defaultChecked: true, tags: [{ label: 'Permanent deletion', type: 'caution' }]
+      risk: 'danger', icon: 'ic-trash', color: 'var(--cat-trash)',
+      defaultChecked: false, tags: [{ label: 'Permanent deletion', type: 'caution' }]
     },
     {
-      key: 'app_leftovers', index: 10, name: 'App Leftover Files',
+      key: 'app_leftovers', name: 'App Leftover Files',
       desc: 'Orphaned preferences & containers from uninstalled apps',
       risk: 'caution', icon: 'ic-package-x', color: 'var(--cat-developer)',
       defaultChecked: false, tags: [{ label: 'Orphaned items', type: 'caution' }]
     },
     {
-      key: 'developer', index: 11, name: 'Developer Tool Caches',
-      desc: 'Homebrew downloads, CocoaPods, npm, yarn, pip cache',
-      risk: 'safe', icon: 'ic-wrench', color: 'var(--cat-developer)',
-      defaultChecked: true, tags: [{ label: 'Safe to remove', type: 'safe' }]
+      key: 'developer', name: 'Developer Tool Caches',
+      desc: 'Build caches, package stores, containers and downloaded models',
+      risk: 'caution', icon: 'ic-wrench', color: 'var(--cat-developer)',
+      defaultChecked: false, tags: [{ label: 'Review selected items', type: 'caution' }]
     },
     {
-      key: 'quicklook', index: 12, name: 'QuickLook Thumbnail Cache',
+      key: 'quicklook_cache', name: 'QuickLook Thumbnail Cache',
       desc: 'Finder preview thumbnail database',
       risk: 'safe', icon: 'ic-sparkles', color: 'var(--cat-cache)',
       defaultChecked: true, tags: [{ label: 'Re-generated on demand', type: 'safe' }]
     },
     {
-      key: 'ios_backups', index: 13, name: 'Old iOS Device Backups',
+      key: 'ios_backups', name: 'Old iOS Device Backups',
       desc: 'Local iPhone and iPad backups in MobileSync',
       risk: 'danger', icon: 'ic-alert-triangle', color: 'var(--cat-ios)',
       defaultChecked: false, tags: [{ label: 'Permanent', type: 'danger' }]
     },
     {
-      key: 'app_uninstaller', index: 14, name: 'Installed Applications',
+      key: 'app_uninstaller', name: 'Installed Applications',
       desc: 'Targeted removal of complete app bundles',
       risk: 'caution', icon: 'ic-package-x', color: 'var(--cat-developer)',
       defaultChecked: false, tags: [{ label: 'Explicit select', type: 'caution' }]
     },
     {
-      key: 'other_trash', index: 16, name: 'Trash on External Volumes',
+      key: 'other_trash', name: 'Trash on External Volumes',
       desc: 'Hidden trash bins on connected external drives',
       risk: 'danger', icon: 'ic-alert-triangle', color: 'var(--danger)',
       defaultChecked: false, tags: [{ label: 'Permanent', type: 'danger' }]
     },
     {
-      key: 'project_artifacts', index: 17, name: 'Project Build Folders',
+      key: 'project_artifacts', name: 'Project Build Folders',
       desc: 'Old node_modules, target/, .build directories in user projects',
       risk: 'caution', icon: 'ic-wrench', color: 'var(--cat-developer)',
       defaultChecked: false, tags: [{ label: 'Explicit select', type: 'caution' }]
     },
     {
-      key: 'installer_artifacts', index: 18, name: 'Installer Packages & DMGs',
+      key: 'installer_artifacts', name: 'Installer Packages & DMGs',
       desc: 'Large .dmg, .pkg, and .iso files in Downloads folder',
       risk: 'caution', icon: 'ic-hard-drive', color: 'var(--cat-system)',
       defaultChecked: false, tags: [{ label: 'Explicit select', type: 'caution' }]
     }
   ];
 
-  const KEY_BY_INDEX = Object.fromEntries(CATEGORIES.map(c => [c.index, c.key]));
+  CATEGORIES.push({ key: 'saved_app_state', name: 'Saved Application State',
+    desc: 'Saved windows and application resume state', risk: 'caution',
+    icon: 'ic-package-x', color: 'var(--cat-system)', defaultChecked: false,
+    tags: [{ label: 'Caution', type: 'caution' }] });
+
   const CAT_BY_KEY = Object.fromEntries(CATEGORIES.map(c => [c.key, c]));
 
   /* ══════════════════════════════════════════════════════════
@@ -152,10 +156,9 @@
     if (!str) return '';
     const div = document.createElement('div');
     div.textContent = String(str);
-    return div.innerHTML;
+    return div.innerHTML.replace(/"/g, '&quot;').replace(/'/g, '&#39;');
   }
 
-  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
   /* ══════════════════════════════════════════════════════════
      Terminal Logger
@@ -400,17 +403,16 @@
     const grid = $('#dashCategoriesSubgrid');
     if (!grid) return;
 
-    let totalBytes = 0;
+    const totalBytes = ScanUtil.computeTotalBytes(state.scanData);
     const scan = state.scanData?.scan || {};
 
     const tilesHtml = CATEGORIES.slice(0, 8).map(cat => {
       const info = scan[cat.key];
       const bytes = info?.size_bytes || 0;
-      totalBytes += bytes;
 
       return `
         <div class="cat-stat-tile" data-tab-link="smart-clean">
-          <div class="tile-icon" style="background:${cat.color}15;color:${cat.color};">
+          <div class="tile-icon" style="background:var(--surface-3);color:${cat.color};">
             <svg><use href="#${cat.icon}"/></svg>
           </div>
           <div style="flex:1;min-width:0;">
@@ -437,7 +439,8 @@
     const html = CATEGORIES.map(cat => {
       const info = scan[cat.key];
       const bytes = info?.size_bytes || 0;
-      const isChecked = state.selectedCategories.has(cat.key);
+      const available = !!info;
+      const isChecked = available && state.selectedCategories.has(cat.key);
       const riskClass = cat.risk === 'danger' ? 'danger-category' : (cat.risk === 'caution' ? 'caution-category' : '');
       const subitems = Array.isArray(info?.subitems) ? info.subitems : [];
 
@@ -449,7 +452,7 @@
         <div class="cat-item-card ${riskClass}" data-cat-key="${cat.key}">
           <div class="cat-item-header" data-toggle-accordion="${cat.key}">
             <div class="cat-left-meta">
-              <input type="checkbox" class="cat-checkbox" ${isChecked ? 'checked' : ''} data-cat-check="${cat.key}" />
+              <input type="checkbox" class="cat-checkbox" ${available ? '' : 'disabled'} ${isChecked ? 'checked' : ''} data-cat-check="${cat.key}" />
               <div>
                 <div class="cat-name-row">
                   <span>${escapeHtml(cat.name)}</span>
@@ -459,7 +462,7 @@
               </div>
             </div>
             <div class="cat-right-meta">
-              <span class="cat-size-pill">${formatBytes(bytes)}</span>
+              <span class="cat-size-pill">${available ? formatBytes(bytes) : 'Unavailable'}</span>
               ${subitems.length > 0 ? `<svg width="18" height="18" style="color:var(--text-3);"><use href="#ic-chevron-down"/></svg>` : ''}
             </div>
           </div>
@@ -470,7 +473,7 @@
               ${subitems.map(sub => `
                 <div class="subitem-entry">
                   <div class="subitem-left">
-                    <input type="checkbox" class="cat-checkbox" checked data-sub-cat="${cat.key}" data-sub-id="${escapeHtml(sub.id)}" />
+                    ${ScanUtil.FILELIST_CATEGORIES.includes(cat.key) ? `<input type="checkbox" class="cat-checkbox" ${state.selectedSubitems[cat.key]?.has(sub.id) ? 'checked' : ''} data-sub-cat="${cat.key}" data-sub-id="${escapeHtml(sub.id)}" aria-label="Select ${escapeHtml(sub.name || sub.id)}" />` : ''}
                     <div>
                       <div class="subitem-name">${escapeHtml(sub.name || sub.id)}</div>
                       <div class="subitem-path">${escapeHtml(sub.path || '')}</div>
@@ -495,8 +498,11 @@
     const scan = state.scanData?.scan || {};
 
     state.selectedCategories.forEach(key => {
-      const bytes = scan[key]?.size_bytes || 0;
-      totalBytes += bytes;
+      if (!scan[key]) return;
+      const items = scan[key].subitems;
+      totalBytes += ScanUtil.FILELIST_CATEGORIES.includes(key) && Array.isArray(items)
+        ? items.reduce((sum, item) => sum + (state.selectedSubitems[key]?.has(item.id) ? (item.size_bytes || 0) : 0), 0)
+        : scan[key].size_bytes || 0;
       count++;
     });
 
@@ -506,11 +512,31 @@
 
   // Accordion toggle & selection events
   $('#smartCleanCategoriesList')?.addEventListener('click', (e) => {
+    if (e.target.dataset.subCat) {
+      const key = e.target.dataset.subCat;
+      const selected = state.selectedSubitems[key] ||= new Set();
+      if (e.target.checked) selected.add(e.target.dataset.subId);
+      else selected.delete(e.target.dataset.subId);
+      if (selected.size) state.selectedCategories.add(key);
+      else state.selectedCategories.delete(key);
+      const checkbox = $(`[data-cat-check="${key}"]`);
+      if (checkbox) checkbox.checked = selected.size > 0;
+      updateSmartCleanSelectedSummary();
+      return;
+    }
     // Checkbox clicked
     if (e.target.dataset.catCheck) {
       const key = e.target.dataset.catCheck;
-      if (e.target.checked) state.selectedCategories.add(key);
+      if (!state.scanData?.scan?.[key]) return;
+      if (e.target.checked) {
+        state.selectedCategories.add(key);
+        state.selectedSubitems[key] = new Set((state.scanData.scan[key].subitems || []).map(item => item.id));
+      }
       else state.selectedCategories.delete(key);
+      $$(`[data-sub-cat="${key}"]`).forEach(checkbox => {
+        checkbox.checked = e.target.checked;
+      });
+      if (!e.target.checked) state.selectedSubitems[key] = new Set();
       updateSmartCleanSelectedSummary();
       return;
     }
@@ -528,9 +554,10 @@
   $('#smartSelectAll')?.addEventListener('change', (e) => {
     const isChecked = e.target.checked;
     CATEGORIES.forEach(c => {
-      if (c.risk === 'safe' || (isChecked && c.risk === 'caution')) {
-        if (isChecked) state.selectedCategories.add(c.key);
-        else state.selectedCategories.delete(c.key);
+      if (!isChecked) state.selectedCategories.delete(c.key);
+      else if (c.risk === 'safe' && state.scanData?.scan?.[c.key]) {
+        state.selectedCategories.add(c.key);
+        state.selectedSubitems[c.key] = new Set((state.scanData.scan[c.key].subitems || []).map(item => item.id));
       }
     });
     renderSmartCleanView();
@@ -564,16 +591,13 @@
     const btn = $('#btnExecuteClean');
     if (btn) { btn.disabled = true; btn.textContent = state.dryRun ? 'Simulating...' : 'Cleaning...'; }
 
-    const selectedIndices = Array.from(state.selectedCategories)
-      .map(k => CAT_BY_KEY[k]?.index)
-      .filter(Number.isFinite);
-
-    termLog(`Initiating ${state.dryRun ? 'DRY-RUN simulation' : 'cleaning'} for ${selectedIndices.length} categories...`, 'warning');
+    const categories = Array.from(state.selectedCategories).filter(k => state.scanData?.scan?.[k]);
+    termLog(`Initiating ${state.dryRun ? 'DRY-RUN simulation' : 'cleaning'} for ${categories.length} categories...`, 'warning');
 
     try {
       if (state.backendOnline) {
         const payload = {
-          categories: selectedIndices,
+          ...ScanUtil.buildSelectedCleanPayload(state.scanData, categories, state.selectedSubitems),
           dry_run: state.dryRun
         };
         const res = await apiFetch('/api/clean', {
@@ -587,9 +611,7 @@
           : `[Cleanup Complete]\nSuccessfully freed ${res.freed_human || '0 B'} of disk space!`
         );
       } else {
-        await sleep(1500);
-        termLog('Simulated clean completed (Backend offline).', 'success');
-        alert('[Simulation Complete] Space reclaimed in demo mode.');
+        throw new Error('Backend unavailable. No cleanup was performed.');
       }
 
       // Refresh scan
@@ -616,9 +638,7 @@
         termLog(`${toolName} succeeded: ${successMsg}`, 'success');
         alert(`[${toolName}]\n${successMsg}`);
       } else {
-        await sleep(1000);
-        termLog(`${toolName} executed in simulation mode.`, 'success');
-        alert(`[${toolName}]\nOperation simulated successfully.`);
+        throw new Error('Backend unavailable. No maintenance was performed.');
       }
     } catch (err) {
       termLog(`${toolName} error: ${err.message}`, 'error');
@@ -682,14 +702,8 @@
         const data = await apiFetch('/api/apps');
         state.appsList = data.apps || [];
       } else {
-        state.appsList = [
-          { name: 'Xcode', size_bytes: 12400 * 1024 * 1024, version: '15.4', last_used: '2 days ago' },
-          { name: 'Docker Desktop', size_bytes: 5200 * 1024 * 1024, version: '4.35', last_used: '5 days ago' },
-          { name: 'Visual Studio Code', size_bytes: 1200 * 1024 * 1024, version: '1.94', last_used: 'Today' },
-          { name: 'Slack', size_bytes: 780 * 1024 * 1024, version: '4.39', last_used: 'Today' },
-          { name: 'Adobe Photoshop', size_bytes: 4800 * 1024 * 1024, version: '25.12', last_used: '1 month ago' },
-          { name: 'Google Chrome', size_bytes: 980 * 1024 * 1024, version: '130.0', last_used: 'Today' }
-        ];
+        state.appsList = [];
+        throw new Error('Backend unavailable. Start the local server and reconnect.');
       }
       renderAppsGrid();
     } catch (err) {
@@ -746,6 +760,7 @@
       async () => {
         termLog(`Uninstalling app: ${appName}...`, 'warning');
         try {
+          if (!state.backendOnline) throw new Error('Backend unavailable. No application was removed.');
           if (state.backendOnline) {
             await apiFetch('/api/uninstall', {
               method: 'POST',
@@ -764,62 +779,45 @@
   });
 
   /* ══════════════════════════════════════════════════════════
-     Large Files & Duplicates (Mock/Demo & Integration)
+     Large Files & Duplicates — live, read-only inventory
      ══════════════════════════════════════════════════════════ */
-  function loadLargeFiles() {
-    const c = $('#largeFilesContainer');
-    if (!c) return;
-    c.innerHTML = `
-      <div class="card" style="padding:24px;">
-        <div style="font-weight:700;font-size:16px;margin-bottom:12px;">Large System Files (&gt;100MB)</div>
-        <div style="font-size:13px;color:var(--text-2);margin-bottom:20px;">Review and clean unneeded massive installers and backup packages.</div>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr><th>Filename</th><th>Location</th><th>Size</th><th>Action</th></tr>
-            </thead>
-            <tbody>
-              <tr><td><strong>macOS_Sonoma_14.5.dmg</strong></td><td>~/Downloads/</td><td>12.8 GB</td><td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px;">Delete</button></td></tr>
-              <tr><td><strong>xcode_backup_archive.zip</strong></td><td>~/Documents/</td><td>4.2 GB</td><td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px;">Delete</button></td></tr>
-              <tr><td><strong>ubuntu_vm_disk.qcow2</strong></td><td>~/VirtualMachines/</td><td>8.4 GB</td><td><button class="btn btn-danger" style="padding:4px 8px;font-size:11px;">Delete</button></td></tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `;
-  }
+  const fileScanPending = new Set();
+  function loadLargeFiles() { return loadFileInventory('large'); }
+  function loadDuplicateFiles() { return loadFileInventory('duplicates'); }
 
-  function loadDuplicateFiles() {
-    const c = $('#duplicatesContainer');
-    if (!c) return;
-    c.innerHTML = `
-      <div class="card" style="padding:24px;">
-        <div style="font-weight:700;font-size:16px;margin-bottom:12px;">Identified Duplicate Files</div>
-        <div style="font-size:13px;color:var(--text-2);margin-bottom:20px;">Copies have identical SHA-256 hashes. Safely delete secondary duplicates while keeping original files.</div>
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr><th>Original File</th><th>Duplicate Copies</th><th>Wasted Space</th><th>Action</th></tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td><strong>presentation_final.pptx</strong><div style="font-size:11px;color:var(--text-3);">~/Documents/Work/</div></td>
-                <td>~/Desktop/presentation_final copy.pptx</td>
-                <td><strong style="color:var(--danger);">48 MB</strong></td>
-                <td><button class="btn btn-secondary" style="padding:4px 8px;font-size:11px;">Clean Copy</button></td>
-              </tr>
-              <tr>
-                <td><strong>vacation_video.mov</strong><div style="font-size:11px;color:var(--text-3);">~/Movies/</div></td>
-                <td>~/Downloads/vacation_video (1).mov</td>
-                <td><strong style="color:var(--danger);">420 MB</strong></td>
-                <td><button class="btn btn-secondary" style="padding:4px 8px;font-size:11px;">Clean Copy</button></td>
-              </tr>
-            </tbody>
-          </table>
-        </div>
-      </div>
-    `;
+  async function loadFileInventory(kind) {
+    const container = $(kind === 'large' ? '#largeFilesContainer' : '#duplicatesContainer');
+    if (!container || fileScanPending.has(kind)) return;
+    fileScanPending.add(kind);
+    container.setAttribute('aria-busy', 'true');
+    container.innerHTML = '<div class="card file-scan-card" role="status">Scanning current files… This may take up to 20 seconds.</div>';
+    try {
+      const data = await apiFetch(kind === 'large' ? '/api/large-files' : '/api/duplicates');
+      const results = data.results || [];
+      const notice = data.partial
+        ? `Partial scan: ${data.limit_reason || 'some files could not be read or changed during the scan'}. ${data.skipped_errors} unreadable or changed entries.`
+        : `Scan complete. ${data.scanned_files} files checked.`;
+      const rows = kind === 'large'
+        ? results.map(file => `<tr><td><strong>${escapeHtml(file.name)}</strong></td><td class="file-scan-path">${escapeHtml(file.path)}</td><td>${formatBytes(file.size_bytes)}</td></tr>`).join('')
+        : results.map(group => `<tr><td class="file-scan-path">${group.files.map(file => escapeHtml(file.path)).join('<br>')}</td><td>${group.files.length}</td><td>${formatBytes(group.duplicate_bytes)}</td></tr>`).join('');
+      container.innerHTML = `<div class="card file-scan-card">
+        <button class="btn btn-secondary" data-refresh-files="${kind}">Scan again</button>
+        <p role="status">${escapeHtml(notice)}${data.truncated ? ' Showing the first 200 results.' : ''}</p>
+        <p>${escapeHtml(data.scope)}</p>
+        <p>${kind === 'large' ? `Files at least ${formatBytes(data.large_min_bytes)}.` : 'Identical content verified with SHA-256; hard links count once. No copy is assumed to be the original.'} Review paths in Finder to manage files. This view does not delete files.</p>
+        ${results.length ? `<div class="table-wrap"><table class="data-table"><thead><tr>${kind === 'large' ? '<th>Filename</th><th>Location</th><th>Size</th>' : '<th>Matching files</th><th>Copies</th><th>Extra copy size</th>'}</tr></thead><tbody>${rows}</tbody></table></div>` : `<p>${data.partial ? 'No matches found in the portion scanned.' : 'No matching files found in the scanned locations.'}</p>`}
+      </div>`;
+    } catch (err) {
+      container.innerHTML = `<div class="card file-scan-card"><p role="alert">Could not scan files: ${escapeHtml(err.message)}</p><button class="btn btn-secondary" data-refresh-files="${kind}">Try again</button></div>`;
+    } finally {
+      fileScanPending.delete(kind);
+      container.setAttribute('aria-busy', 'false');
+    }
   }
+  document.addEventListener('click', event => {
+    const button = event.target.closest('[data-refresh-files]');
+    if (button) loadFileInventory(button.dataset.refreshFiles);
+  });
 
   /* ══════════════════════════════════════════════════════════
      Operations History
@@ -838,23 +836,15 @@
 
         tbody.innerHTML = rows.map(r => `
           <tr>
-            <td>${escapeHtml(r.timestamp || '—')}</td>
+            <td>${escapeHtml(r.ts ? new Date(r.ts * 1000).toLocaleString() : '—')}</td>
             <td><strong>${escapeHtml(r.action || 'Clean')}</strong></td>
-            <td>${escapeHtml(Array.isArray(r.categories) ? r.categories.join(', ') : (r.items_count || '—'))}</td>
-            <td><strong style="color:var(--safe);">${formatBytes(r.freed_bytes || 0)}</strong></td>
-            <td><span class="tag-badge tag-safe">SUCCESS</span></td>
+            <td>${escapeHtml(r.category || '—')}</td>
+            <td><strong style="color:var(--safe);">${formatBytes(r.bytes || 0)}</strong></td>
+            <td><span class="tag-badge tag-caution">${escapeHtml(r.action || 'RECORDED')}</span></td>
           </tr>
         `).join('');
       } else {
-        tbody.innerHTML = `
-          <tr>
-            <td>Today, 09:15</td>
-            <td><strong>Smart Clean</strong></td>
-            <td>User Caches, Xcode Derived Data, Logs</td>
-            <td><strong style="color:var(--safe);">4.8 GB</strong></td>
-            <td><span class="tag-badge tag-safe">SUCCESS</span></td>
-          </tr>
-        `;
+        throw new Error('Backend unavailable. History could not be loaded.');
       }
     } catch (err) {
       tbody.innerHTML = `<tr><td colspan="5" style="text-align:center;color:var(--danger);padding:32px;">Could not load history: ${escapeHtml(err.message)}</td></tr>`;
@@ -901,13 +891,21 @@
       if (state.backendOnline) {
         const scanResult = await apiFetch('/api/scan');
         state.scanData = scanResult;
-        termLog('Scan completed successfully.', 'success');
+        state.selectedCategories = new Set([...state.selectedCategories].filter(key => scanResult.scan?.[key]));
+        state.selectedSubitems = Object.fromEntries(Object.entries(scanResult.scan || {}).map(([key, info]) =>
+          [key, new Set((info.subitems || []).map(item => item.id))]));
+        termLog(scanResult.partial ? 'Partial scan: unavailable categories have been disabled.' : 'Scan completed successfully.', scanResult.partial ? 'warning' : 'success');
       } else {
         state.scanData = { scan: {} };
+        state.selectedCategories.clear();
       }
       renderDashboardCleanableTiles();
       if (state.activeTab === 'smart-clean') renderSmartCleanView();
     } catch (err) {
+      state.scanData = { scan: {} };
+      state.selectedCategories.clear();
+      renderDashboardCleanableTiles();
+      if (state.activeTab === 'smart-clean') renderSmartCleanView();
       termLog(`Scan error: ${err.message}`, 'error');
     }
   }
@@ -941,7 +939,7 @@
       }
     } catch (e) {
       state.backendOnline = false;
-      termLog('Running in standalone frontend mode.', 'warning');
+      termLog('Backend unavailable. Start the local server and reload to reconnect.', 'error');
       renderEmptyStorageRing();
     }
 

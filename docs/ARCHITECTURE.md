@@ -33,3 +33,43 @@ categories are disabled in the UI and never retain a stale selection.
 
 Future module extraction should preserve this boundary: category modules may
 discover candidates, but only the core executor may mutate them.
+
+## Live file inventory
+
+`web/file_scanner.py` implements read-only Large Files and Duplicate Files
+inventories. `/api/large-files` and `/api/duplicates` enumerate the current home
+directory without retaining a result cache. Large files have logical sizes of
+at least 100 MiB. Duplicates are grouped by size, then verified with SHA-256;
+multiple hard links to one inode count once. Files are checked for changes
+before/after hashing and again before response assembly. These are snapshots;
+external changes after the response require **Scan again**.
+
+The scanner excludes hidden paths, Library directories, application/photo
+bundles, dependency directories, symlinks and known cloud placeholders. It has
+a 20-second cooperative deadline, 100,000-entry discovery limit, 2 GiB content
+read budget and 200-result display limit. Slow individual filesystem calls can
+exceed the cooperative deadline. Limits and access errors produce explicit
+partial-result metadata. One inventory runs at a time; overlapping requests
+receive HTTP 409. No file deletion API is exposed by these views.
+
+## Dashboard contract corrections (2026-09-09)
+
+- Removed hard-coded demo inventories, offline app/history fixtures and false
+  offline cleanup success messages.
+- Removed positional category numbers from browser cleanup requests. The
+  browser category IDs now match all 18 server categories; regression tests
+  enforce this contract.
+- Sub-item checkboxes determine the cleanup payload, including scan identities
+  for project and installer artifacts. Empty or malformed explicit selections
+  are rejected instead of falling back to whole-category cleanup.
+- Unavailable categories lose their selection and are disabled after partial
+  or failed scans. Bulk safe selection excludes caution/danger categories.
+- Developer cleanup requires deliberate selection; Trash is not selected by
+  default. The dashboard total uses the backend total/in_total contract rather
+  than summing only the eight visible tiles.
+- History uses actual operation fields (`ts`, `bytes`, `category`, `action`).
+
+Further module extraction should focus on separating application discovery,
+scheduling and HTTP transport from `server.py`, preserving the tested mutation
+boundary. The shell category registry remains canonical; the browser keeps
+presentation metadata and uses stable IDs, never display positions.

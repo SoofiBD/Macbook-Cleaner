@@ -144,3 +144,36 @@ test('buildCleanPayload preserves installer file scan identity', () => {
     path: '/Users/x/Downloads/Tool.dmg', identity: '1:2:100:1234',
   }]);
 });
+
+test('selected cleanup sends stable IDs and only checked subitems', () => {
+  const payload = ScanUtil.buildSelectedCleanPayload(SAMPLE,
+    ['app_leftovers', 'user_cache'], { app_leftovers: new Set(['OldApp']) });
+  assert.deepEqual(payload, { categories: ['app_leftovers', 'user_cache'], app_leftovers_selected: ['OldApp'] });
+});
+
+test('selected cleanup rejects unavailable categories, empty selection and stale identity', () => {
+  assert.throws(() => ScanUtil.buildSelectedCleanPayload(SAMPLE, ['xcode'], {}), /unavailable/);
+  assert.throws(() => ScanUtil.buildSelectedCleanPayload(SAMPLE, ['app_leftovers'], {}), /Select at least/);
+  assert.throws(() => ScanUtil.buildSelectedCleanPayload({}, [], {}), /No available/);
+  const data = { scan: { installer_artifacts: { subitems: [{ id: '/Downloads/test.dmg' }] } } };
+  assert.throws(() => ScanUtil.buildSelectedCleanPayload(data, ['installer_artifacts'], {
+    installer_artifacts: new Set(['/Downloads/test.dmg']),
+  }), /identity missing/);
+});
+
+test('selected cleanup includes scan identity for individual installer files', () => {
+  const data = { scan: { installer_artifacts: { subitems: [
+    { id: '/Downloads/test.dmg', identity: '1:2:3:4' },
+  ] } } };
+  assert.deepEqual(ScanUtil.buildSelectedCleanPayload(data, ['installer_artifacts'], {
+    installer_artifacts: new Set(['/Downloads/test.dmg']),
+  }), { categories: ['installer_artifacts'], installer_artifacts_selected: [
+    { path: '/Downloads/test.dmg', identity: '1:2:3:4' },
+  ] });
+});
+
+test('missing subitem data cannot broaden cleanup to the entire category', () => {
+  assert.throws(() => ScanUtil.buildSelectedCleanPayload(
+    { scan: { developer: { size_bytes: 100 } } }, ['developer'], {}
+  ), /Item list unavailable/);
+});
