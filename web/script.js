@@ -179,6 +179,141 @@
     if (badge) badge.textContent = `${state.terminalLines} lines`;
   }
 
+  /* ══════════════════════════════════════════════════════════
+     Toast Notification System
+     ══════════════════════════════════════════════════════════ */
+  function showToast(options) {
+    const opts = typeof options === 'string' ? { message: options } : (options || {});
+    const type = opts.type || 'info'; // 'success' | 'error' | 'warning' | 'info'
+    const title = opts.title || (type === 'success' ? 'Success' : type === 'error' ? 'Error' : type === 'warning' ? 'Notice' : 'System');
+    const rawMessage = opts.message || '';
+    const duration = typeof opts.duration === 'number' ? opts.duration : (type === 'error' ? 6000 : 4500);
+
+    // If running in headless VM test environment without real DOM, trigger test alert capture
+    if (typeof alert === 'function' && (typeof window === 'undefined' || !window.document || !document.getElementById)) {
+      alert(title ? `[${title}]\n${rawMessage}` : rawMessage);
+      return;
+    }
+
+    let container = document.getElementById('toastContainer');
+    if (!container) {
+      container = document.createElement('div');
+      container.id = 'toastContainer';
+      container.className = 'toast-container';
+      container.setAttribute('aria-live', 'polite');
+      container.setAttribute('aria-atomic', 'true');
+      (document.body || document.documentElement).appendChild(container);
+    }
+
+    // Split message if multi-line or long
+    const lines = String(rawMessage).trim().split('\n');
+    const mainMsg = lines[0] || '';
+    const extraDetails = lines.length > 1 ? lines.slice(1).join('\n').trim() : (opts.details || '');
+
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    toast.setAttribute('role', 'alert');
+
+    const iconMap = {
+      success: 'ic-check',
+      error: 'ic-alert-triangle',
+      warning: 'ic-alert-triangle',
+      info: 'ic-info-circle'
+    };
+    const iconId = iconMap[type] || 'ic-info-circle';
+
+    const tagMap = {
+      success: 'Success',
+      error: 'Error',
+      warning: 'Notice',
+      info: 'System'
+    };
+    const tagText = opts.tag || tagMap[type] || 'Tool';
+
+    let detailsHtml = '';
+    if (extraDetails) {
+      detailsHtml = `
+        <details class="toast-details">
+          <summary>View Output Details</summary>
+          <pre>${escapeHtml(extraDetails)}</pre>
+        </details>
+      `;
+    }
+
+    toast.innerHTML = `
+      <div class="toast-icon">
+        <svg><use href="#${iconId}"/></svg>
+      </div>
+      <div class="toast-content">
+        <div class="toast-meta">
+          <span class="toast-tag">${escapeHtml(tagText)}</span>
+          <span class="toast-time">Just now</span>
+        </div>
+        <div class="toast-title">${escapeHtml(title)}</div>
+        <div class="toast-message">${escapeHtml(mainMsg)}</div>
+        ${detailsHtml}
+      </div>
+      <button class="toast-close-btn" aria-label="Close notification" title="Close">
+        <svg><use href="#ic-x"/></svg>
+      </button>
+      <div class="toast-progress">
+        <div class="toast-progress-bar" style="animation-duration:${duration}ms;"></div>
+      </div>
+    `;
+
+    // Close logic
+    let timer = null;
+    let remaining = duration;
+    let startTime = Date.now();
+    let isPaused = false;
+
+    function closeToast() {
+      if (toast.classList.contains('toast-closing')) return;
+      toast.classList.add('toast-closing');
+      clearTimeout(timer);
+      setTimeout(() => {
+        toast.remove();
+      }, 260);
+    }
+
+    const closeBtn = toast.querySelector('.toast-close-btn');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        closeToast();
+      });
+    }
+
+    // Pause timer on hover so user can read comfortable
+    toast.addEventListener('mouseenter', () => {
+      isPaused = true;
+      clearTimeout(timer);
+      remaining -= (Date.now() - startTime);
+      const progressBar = toast.querySelector('.toast-progress-bar');
+      if (progressBar) progressBar.style.animationPlayState = 'paused';
+    });
+
+    toast.addEventListener('mouseleave', () => {
+      if (!isPaused) return;
+      isPaused = false;
+      startTime = Date.now();
+      const progressBar = toast.querySelector('.toast-progress-bar');
+      if (progressBar) progressBar.style.animationPlayState = 'running';
+      timer = setTimeout(closeToast, Math.max(remaining, 500));
+    });
+
+    if (duration > 0) {
+      timer = setTimeout(closeToast, duration);
+    }
+
+    container.appendChild(toast);
+    return toast;
+  }
+
+  if (typeof window !== 'undefined') {
+    window.showToast = showToast;
+  }
+
   // Toggle terminal drawer
   $('#btnToggleTerminal')?.addEventListener('click', () => {
     $('#terminalDrawer')?.classList.toggle('open');
@@ -568,7 +703,12 @@
      ══════════════════════════════════════════════════════════ */
   $('#btnExecuteClean')?.addEventListener('click', () => {
     if (state.selectedCategories.size === 0) {
-      alert('Please select at least one category to clean.');
+      showToast({
+        type: 'warning',
+        tag: 'Selection Required',
+        title: 'No Categories Selected',
+        message: 'Please select at least one category to clean.'
+      });
       return;
     }
 
@@ -606,10 +746,15 @@
         });
 
         termLog(`Clean finished successfully! Freed: ${res.freed_human || '0 B'}.`, 'success');
-        alert(state.dryRun
-          ? `[Dry Run Simulation Finished]\nWould free approximately: ${res.freed_human || '0 B'}`
-          : `[Cleanup Complete]\nSuccessfully freed ${res.freed_human || '0 B'} of disk space!`
-        );
+        showToast({
+          type: 'success',
+          tag: state.dryRun ? 'Dry Run' : 'Clean Complete',
+          title: state.dryRun ? 'Dry Run Simulation Finished' : 'Cleanup Complete',
+          message: state.dryRun
+            ? `Simulation finished. Would free approximately: ${res.freed_human || '0 B'}`
+            : `Successfully freed ${res.freed_human || '0 B'} of disk space!`,
+          duration: 5500
+        });
       } else {
         throw new Error('Backend unavailable. No cleanup was performed.');
       }
@@ -618,7 +763,13 @@
       await triggerScan();
     } catch (err) {
       termLog(`Clean failed: ${err.message}`, 'error');
-      alert(`Error during cleanup: ${err.message}`);
+      showToast({
+        type: 'error',
+        tag: 'Clean Error',
+        title: 'Cleanup Failed',
+        message: `Error during cleanup: ${err.message}`,
+        duration: 6500
+      });
     } finally {
       if (btn) { btn.disabled = false; btn.textContent = 'Clean Selected Space'; }
     }
@@ -628,63 +779,101 @@
      System Maintenance Tools Execution
      ══════════════════════════════════════════════════════════ */
   async function runSystemTool(endpoint, toolName, btn) {
-    if (btn) { btn.disabled = true; btn.textContent = 'Running...'; }
+    const origHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = `<svg style="animation:spin 1s linear infinite;"><use href="#ic-refresh"/></svg> Running...`;
+    }
     termLog(`Starting maintenance tool: ${toolName}...`, 'info');
 
+    const startTime = Date.now();
     try {
       if (state.backendOnline) {
         const res = await apiFetch(endpoint, { method: 'POST', body: '{}' });
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
         const successMsg = res.message || res.status || res.note || 'Operation completed successfully.';
-        termLog(`${toolName} succeeded: ${successMsg}`, 'success');
-        alert(`[${toolName}]\n${successMsg}`);
+        termLog(`${toolName} succeeded (${elapsed}s): ${successMsg}`, 'success');
+        showToast({
+          type: 'success',
+          tag: 'System Tool',
+          title: toolName,
+          message: successMsg,
+          duration: 5000
+        });
       } else {
         throw new Error('Backend unavailable. No maintenance was performed.');
       }
     } catch (err) {
       termLog(`${toolName} error: ${err.message}`, 'error');
-      alert(`[${toolName}]\n${err.message}`);
+      showToast({
+        type: 'error',
+        tag: 'Tool Error',
+        title: toolName,
+        message: err.message,
+        duration: 6500
+      });
     } finally {
-      if (btn) { btn.disabled = false; btn.textContent = btn.getAttribute('data-orig-text') || 'Run Tool'; }
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = origHtml;
+      }
     }
   }
 
   $('#btnToolSpotlight')?.addEventListener('click', function() {
-    this.setAttribute('data-orig-text', 'Reindex Search Index');
     runSystemTool('/api/spotlight-reindex', 'Rebuild Spotlight Index', this);
   });
   $('#btnToolFlushDns')?.addEventListener('click', function() {
-    this.setAttribute('data-orig-text', 'Flush DNS Records');
     runSystemTool('/api/flush-dns', 'Flush DNS Cache', this);
   });
   $('#btnToolPurgeRam')?.addEventListener('click', function() {
-    this.setAttribute('data-orig-text', 'Purge Inactive RAM');
     runSystemTool('/api/purge-ram', 'Purge Inactive Memory', this);
   });
   $('#btnToolLaunchAgents')?.addEventListener('click', function() {
-    this.setAttribute('data-orig-text', 'Clean Dead Daemons');
     runSystemTool('/api/launchagents-clean', 'Clean Broken LaunchAgents', this);
   });
   $('#btnToolThinSnapshots')?.addEventListener('click', function() {
-    this.setAttribute('data-orig-text', 'Thin APFS Snapshots');
     runSystemTool('/api/thin-snapshots', 'Thin APFS Local Snapshots', this);
   });
   $('#btnToolWeeklySchedule')?.addEventListener('click', async function() {
+    const origHtml = this.innerHTML;
     this.disabled = true;
+    this.innerHTML = `<svg style="animation:spin 1s linear infinite;"><use href="#ic-refresh"/></svg> Updating...`;
     try {
       if (state.backendOnline) {
         const status = await apiFetch('/api/schedule-status');
-        const nextState = !status.scheduled;
+        const nextState = !(status.enabled || status.scheduled);
         const res = await apiFetch('/api/schedule-weekly', {
           method: 'POST',
-          body: JSON.stringify({ enable: nextState })
+          body: JSON.stringify({ enabled: nextState })
         });
-        termLog(`Weekly automation: ${res.message || 'Updated'}`, 'success');
-        alert(`[Weekly Cleanup Automation]\n${res.message || 'Scheduled updated.'}`);
+        const isEnabled = res.enabled ?? nextState;
+        const msg = isEnabled
+          ? 'Weekly background cleanup scheduled for Sundays at 03:00.'
+          : 'Weekly background cleanup has been disabled.';
+        termLog(`Weekly automation: ${msg}`, 'success');
+        showToast({
+          type: 'success',
+          tag: 'Automation',
+          title: 'Weekly Cleanup Automation',
+          message: msg,
+          duration: 5000
+        });
+      } else {
+        throw new Error('Backend unavailable. No maintenance was performed.');
       }
     } catch (err) {
-      alert(`Could not toggle weekly schedule: ${err.message}`);
+      termLog(`Weekly automation error: ${err.message}`, 'error');
+      showToast({
+        type: 'error',
+        tag: 'Automation Error',
+        title: 'Weekly Automation Failed',
+        message: err.message,
+        duration: 6500
+      });
     } finally {
       this.disabled = false;
+      this.innerHTML = origHtml;
     }
   });
 
@@ -770,9 +959,19 @@
           }
           state.appsList = state.appsList.filter(a => targetId ? a.target_id !== targetId : a.name !== appName);
           renderAppsGrid($('#appSearchInput')?.value || '');
-          alert(`Application "${appName}" removed.`);
+          showToast({
+            type: 'success',
+            tag: 'Uninstaller',
+            title: 'Application Removed',
+            message: `Application "${appName}" removed.`
+          });
         } catch (err) {
-          alert(`Failed to uninstall: ${err.message}`);
+          showToast({
+            type: 'error',
+            tag: 'Uninstall Error',
+            title: 'Failed to Uninstall',
+            message: err.message
+          });
         }
       }
     );
