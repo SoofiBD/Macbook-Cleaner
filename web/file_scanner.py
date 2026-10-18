@@ -115,7 +115,8 @@ def scan_files(kind, home=None, *, timeout=20, max_entries=MAX_ENTRIES,
         for item in candidates:
             by_size[item[1][2]].append(item)
         budget = [max_hash_bytes]
-        for size in sorted(by_size):
+        # Largest first: the read budget and deadline go to the groups that free the most space.
+        for size in sorted(by_size, reverse=True):
             items = by_size[size]
             if len(items) < 2:
                 continue
@@ -139,8 +140,10 @@ def scan_files(kind, home=None, *, timeout=20, max_entries=MAX_ENTRIES,
                 break
 
     # Discard files removed or changed since enumeration/hash verification.
+    # Only reported files matter; unrelated churn must not mark the scan partial.
+    to_check = candidates if kind == "large" else [item for _, items in groups for item in items]
     current = []
-    for item in candidates:
+    for item in to_check:
         if _current(*item):
             current.append(item)
         else:

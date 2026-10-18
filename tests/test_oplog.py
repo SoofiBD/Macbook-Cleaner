@@ -439,3 +439,19 @@ def test_restore_refuses_protected_destination(tmp_path):
     result = _run_json(tmp_path, "--restore-items", "1")
 
     assert any(row["reason"] == "protected" for row in result["skipped"])
+
+
+def test_restore_refuses_destination_outside_trash(tmp_path):
+    elsewhere = tmp_path / "Documents"
+    elsewhere.mkdir()
+    dest = elsewhere / "report.txt"
+    dest.write_text("not from trash")
+    source = tmp_path / "report.txt"
+    _write_log(tmp_path, [
+        f"1000\tsessA\ttrash\t1\t{source}\t{dest}\ttest",
+    ])
+
+    result = _run_json(tmp_path, "--restore-items", "1")
+
+    assert any(row["reason"] == "protected" for row in result["skipped"])
+    assert dest.exists() and not source.exists()

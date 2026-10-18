@@ -93,14 +93,18 @@ _scan_cancel_event = threading.Event()
 _scan_running_event = threading.Event()
 _launch_agent_lock = threading.Lock()
 _operation_lock = threading.Lock()
-_scan_cache = {"at": 0.0, "data": None}
+# _cache_lock is held only briefly. Never take _scan_lock here: it is held for
+# a whole scan, which would keep a finished cleanup's _operation_lock busy.
+_cache_lock = threading.Lock()
+_scan_cache = {"at": 0.0, "data": None, "generation": 0}
 SCAN_CACHE_SECONDS = 30
 
 
 def _invalidate_scan_cache():
-    with _scan_lock:
+    with _cache_lock:
         _scan_cache["at"] = 0.0
         _scan_cache["data"] = None
+        _scan_cache["generation"] += 1
 MAX_HISTORY_DAYS = 90
 SNAPSHOT_INTERVAL = 3600           # seconds between recorded snapshots
 FORECAST_HORIZON_DAYS = 365        # don't report a forecast beyond a year
@@ -114,12 +118,22 @@ def _terminate_process_group(process):
     try:
         os.killpg(process.pid, signal.SIGTERM)
         process.communicate(timeout=2)
-    except (ProcessLookupError, subprocess.TimeoutExpired):
-        try:
-            os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        process.communicate()
+        return
+    except (OSError, subprocess.TimeoutExpired):
+        pass
+    try:
+        os.killpg(process.pid, signal.SIGKILL)
+    except OSError:  # group already gone, or only zombies left (EPERM on macOS)
+        pass
+    # Never drain the pipes here: a descendant that called setsid() can hold
+    # them open indefinitely and the timeout would stop being enforced.
+    for pipe in (process.stdout, process.stderr):
+        if pipe is not None:
+            pipe.close()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        pass
 
 
 def _run_process(cmd, *, timeout, cwd=None, env=None, cancel_event=None):
@@ -215,20 +229,24 @@ def _atomic_write(path: Path, writer, *, binary: bool):
     if path.is_symlink():
         raise OSError(f"refusing symlink destination: {path}")
     fd, tmp_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    fd_owned = True
     try:
         os.fchmod(fd, 0o600)
         mode = "wb" if binary else "w"
         kwargs = {} if binary else {"encoding": "utf-8"}
         with os.fdopen(fd, mode, **kwargs) as handle:
+            fd_owned = False  # the file object closes fd from here on
             writer(handle)
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(tmp_name, path)
     except Exception:
-        try:
-            os.close(fd)
-        except OSError:
-            pass
+        # Closing an fd number twice could close another thread's file.
+        if fd_owned:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         try:
             os.unlink(tmp_name)
         except OSError:
@@ -453,7 +471,7 @@ _UUID_RE = re.compile(r'^[0-9A-Fa-f\-]{1,40}$')
 
 def _validate_session_id(s) -> bool:
     """Validate a restore-session id: UUID-ish or pid-timestamp fallback."""
-    return isinstance(s, str) and bool(_SESSION_RE.match(s))
+    return isinstance(s, str) and bool(_SESSION_RE.fullmatch(s))
 
 
 def _validate_item_ids(lst) -> bool:
@@ -1042,32 +1060,6 @@ def _validate_project_artifact_selection(value) -> bool:
     )
 
 
-def _normalize_bool_fields(data: dict) -> dict:
-    """
-    Recursively normalize boolean string fields in scan JSON.
-    Converts string "true"/"false" to Python bool True/False.
-    Also ensures needs_sudo is always a proper bool.
-
-    NOTE: Mutates `data` in-place. Pass a copy if the original must be preserved.
-    """
-    if not isinstance(data, dict):
-        return data
-
-    for key, value in data.items():
-        if isinstance(value, str):
-            if value.lower() == "true":
-                data[key] = True
-            elif value.lower() == "false":
-                data[key] = False
-        elif isinstance(value, dict):
-            _normalize_bool_fields(value)
-        elif isinstance(value, list):
-            for item in value:
-                if isinstance(item, dict):
-                    _normalize_bool_fields(item)
-    return data
-
-
 class CleanupHandler(http.server.BaseHTTPRequestHandler):
     """Request handler for the Apple Cleanup dashboard."""
 
@@ -1210,11 +1202,6 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
                     return None, err_msg
                 return None, f"Invalid JSON from script: {e}"
 
-            # Normalize boolean fields (Bash outputs JSON bool literals,
-            # but this ensures consistency even if format changes)
-            if isinstance(parsed, dict):
-                _normalize_bool_fields(parsed)
-
             return parsed, None
         except subprocess.TimeoutExpired:
             return None, "Script timed out"
@@ -1230,6 +1217,11 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             return
         parsed = urllib.parse.urlparse(self.path)
         path = parsed.path
+        # API GETs start scans and hashing; a cross-site <img> must not.
+        if path.startswith("/api/") and self.headers.get(
+                "Sec-Fetch-Site", "same-origin") not in {"same-origin", "none"}:
+            self._send_error_json("Cross-site request blocked", 403)
+            return
 
         # API endpoints
         if path == "/api/scan":
@@ -1298,10 +1290,12 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         # unavailable tool therefore produces a partial scan instead of losing
         # every result, while the worker cap avoids saturating the disk.
         with _scan_lock:
-            now = time.monotonic()
-            if (_scan_cache["data"] is not None
-                    and now - _scan_cache["at"] < SCAN_CACHE_SECONDS):
-                self._send_json(_scan_cache["data"])
+            with _cache_lock:
+                cached = _scan_cache["data"]
+                fresh = time.monotonic() - _scan_cache["at"] < SCAN_CACHE_SECONDS
+                generation = _scan_cache["generation"]
+            if cached is not None and fresh:
+                self._send_json(cached)
                 return
             _scan_cancel_event.clear()
             _scan_running_event.set()
@@ -1327,9 +1321,12 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
                 # failure. Completed category results remain safe to inspect.
                 data["success"] = True
                 data["partial"] = True
-            if data["success"] and not data["partial"]:
-                _scan_cache["data"] = data
-                _scan_cache["at"] = time.monotonic()
+            with _cache_lock:
+                # A cleanup that ran during this scan made the result stale.
+                if (data["success"] and not data["partial"]
+                        and _scan_cache["generation"] == generation):
+                    _scan_cache["data"] = data
+                    _scan_cache["at"] = time.monotonic()
         if not data["success"]:
             self._send_error_json("Scan failed: no category completed")
             return
@@ -1451,82 +1448,27 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         cat_str = ",".join(safe_cats)
         args = ["--clean-ids-json", cat_str]
 
-        # App leftovers sub-items
-        app_leftovers_selected = payload.get("app_leftovers_selected", [])
-        if app_leftovers_selected and isinstance(app_leftovers_selected, list):
-            safe = [x for x in app_leftovers_selected
-                    if isinstance(x, str) and _validate_app_leftover(x)]
-            if safe:
-                args += ["--app-leftovers", ",".join(safe)]
+        # Every selection was strictly validated above (no commas possible).
+        sub_flags = {
+            "app_leftovers": "--app-leftovers",
+            "browser_full": "--browser-full-sub",
+            "developer": "--developer-sub",
+            "ios_backups": "--ios-backups-sub",
+            "app_uninstaller": "--app-uninstaller-sub",
+        }
+        for category, flag in sub_flags.items():
+            selection = payload.get(category + "_selected")
+            if selection:
+                args += [flag, ",".join(selection)]
 
-        # Browser full sub-items
-        browser_full_selected = payload.get("browser_full_selected", [])
-        if browser_full_selected and isinstance(browser_full_selected, list):
-            safe = [x for x in browser_full_selected
-                    if isinstance(x, str) and _validate_browser_key(x)]
-            if safe:
-                args += ["--browser-full-sub", ",".join(safe)]
-
-        # Developer sub-items
-        developer_selected = payload.get("developer_selected", [])
-        if developer_selected and isinstance(developer_selected, list):
-            safe = [x for x in developer_selected
-                    if isinstance(x, str) and _validate_developer_item(x)]
-            if safe:
-                args += ["--developer-sub", ",".join(safe)]
-
-        # iOS backups sub-items
-        ios_backups_selected = payload.get("ios_backups_selected", [])
-        if ios_backups_selected and isinstance(ios_backups_selected, list):
-            safe_uuids = [u for u in ios_backups_selected
-                         if isinstance(u, str) and _UUID_RE.match(u)]
-            if safe_uuids:
-                args += ["--ios-backups-sub", ",".join(safe_uuids)]
-
-        # App uninstaller sub-items
-        app_uninstaller_selected = payload.get("app_uninstaller_selected", [])
-        if app_uninstaller_selected and isinstance(app_uninstaller_selected, list):
-            safe = [x for x in app_uninstaller_selected
-                    if isinstance(x, str) and _validate_app_name(x)]
-            if safe:
-                args += ["--app-uninstaller-sub", ",".join(safe)]
-
-        # Project artifact sub-items. The shell revalidates the scan-time
-        # device/inode tuple immediately before moving the target to Trash.
-        project_artifacts_selected = payload.get("project_artifacts_selected", [])
-        if project_artifacts_selected:
-            if not isinstance(project_artifacts_selected, list):
-                self._send_error_json("Invalid project artifact selection", 400)
-                return
-            selected = [x for x in project_artifacts_selected
-                        if _validate_project_artifact_selection(x)]
-            if len(selected) != len(project_artifacts_selected):
-                self._send_error_json("Invalid project artifact selection", 400)
-                return
-            safe = [x["path"] for x in selected]
-            identities = [x["identity"] for x in selected]
-            if safe:
-                args += ["--project-artifact-sub", ",".join(safe)]
-                args += ["--project-artifact-identities", ",".join(identities)]
-
-        # Installer files are direct ~/Downloads children and require the
-        # scan-time device/inode/size/mtime tuple. The shell repeats both checks
-        # immediately before moving the explicitly selected file to Trash.
-        installer_artifacts_selected = payload.get("installer_artifacts_selected", [])
-        if installer_artifacts_selected:
-            if not isinstance(installer_artifacts_selected, list):
-                self._send_error_json("Invalid installer file selection", 400)
-                return
-            selected = [x for x in installer_artifacts_selected
-                        if _validate_installer_artifact_selection(x)]
-            if len(selected) != len(installer_artifacts_selected):
-                self._send_error_json("Invalid installer file selection", 400)
-                return
-            safe = [x["path"] for x in selected]
-            identities = [x["identity"] for x in selected]
-            if safe:
-                args += ["--installer-artifact-sub", ",".join(safe)]
-                args += ["--installer-artifact-identities", ",".join(identities)]
+        # Project artifacts and ~/Downloads installers carry a scan-time
+        # identity that the shell rechecks immediately before each Trash move.
+        for category, flag in (("project_artifacts", "--project-artifact"),
+                               ("installer_artifacts", "--installer-artifact")):
+            selection = payload.get(category + "_selected")
+            if selection:
+                args += [flag + "-sub", ",".join(x["path"] for x in selection)]
+                args += [flag + "-identities", ",".join(x["identity"] for x in selection)]
 
         data, err = self._run_script(args, env_extra=_extra_env_for_clean(payload))
         if err:
@@ -1819,7 +1761,9 @@ def _open_browser():
     if os.environ.get("APPLE_CLEANUP_OPEN_BROWSER", "1") == "0":
         return
     try:
-        webbrowser.open(f"http://localhost:{PORT}/")
+        # Not "localhost": macOS resolves it to ::1 first, which can reach a
+        # different app listening on [::]:PORT while we bound 127.0.0.1:PORT.
+        webbrowser.open(f"http://{HOST}:{PORT}/")
     except Exception:
         pass  # Browser launch is best-effort; the server still runs.
 
@@ -1852,7 +1796,7 @@ def _bind_server():
 def main():
     server = _bind_server()
     print(f"🍎 Apple Cleanup Dashboard v{APP_VERSION}")
-    print(f"   http://localhost:{PORT}  (loopback only)")
+    print(f"   http://{HOST}:{PORT}  (loopback only)")
     print(f"   Press Ctrl+C to stop\n")
     # Open the browser shortly after the server starts accepting connections.
     threading.Timer(1.0, _open_browser).start()

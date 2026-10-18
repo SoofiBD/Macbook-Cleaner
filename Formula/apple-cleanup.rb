@@ -68,7 +68,6 @@ class AppleCleanup < Formula
     assert_match "--scan-json", output
 
     assert_path_exists libexec/"web/index.html"
-    assert_path_exists libexec/"web/vendor/gsap.min.js"
     assert_path_exists libexec/"lib/core/path_policy.sh"
     assert_path_exists libexec/"lib/core/executor.sh"
     assert_path_exists libexec/"lib/categories/project_artifacts.sh"
@@ -87,7 +86,7 @@ class AppleCleanup < Formula
       port = nil
       40.times do
         sleep 0.25
-        match = log.read.match(%r{http://localhost:(\d+)}) if log.exist?
+        match = log.read.match(%r{http://(?:localhost|127\.0\.0\.1):(\d+)}) if log.exist?
         if match
           port = match[1].to_i
           break

@@ -3,28 +3,35 @@
 # Sourced by clean_mac.sh after shared formatting/log helpers are initialized.
 # shellcheck disable=SC2034
 
+# Arguments: path, optional "direct" to skip Finder. Bulk cache/log cleanup
+# passes "direct": one Finder round trip per item made large categories take
+# minutes, and in-app Undo still has the exact Trash destination.
 _trash_item() {
-  local path="$1"
+  local path="$1" via="${2:-finder}"
   # -L keeps broken symlinks (target gone, -e is false) in scope.
   [ -e "$path" ] || [ -L "$path" ] || return 0
 
   local base expected expected_was_free=false
   base=$(basename "$path")
+  # "dir/." would make Finder trash the whole parent directory.
+  case "$base" in .|..) return 1 ;; esac
   expected="$HOME/.Trash/$base"
   if [ ! -e "$expected" ] && [ ! -L "$expected" ]; then
     expected_was_free=true
   fi
 
   # Tier 1: AppleScript (native Finder trash with undo support).
-  # Only run if not running in a mocked test environment ($HOME in /tmp or /var)
-  if [[ "$HOME" != /private/var/* && "$HOME" != /var/* && "$HOME" != /tmp/* && "${APPLE_CLEANUP_FORCE_MANUAL_TRASH:-0}" != "1" ]]; then
+  # Only run if not running in a mocked test environment ($HOME in /tmp or /var).
+  # Never for symlinks: "as alias" resolves the link and Finder would trash
+  # the target (possibly on another volume) instead of the link itself.
+  if [ "$via" != "direct" ] && [ ! -L "$path" ] && [[ "$HOME" != /private/var/* && "$HOME" != /var/* && "$HOME" != /tmp/* && "$HOME" != /private/tmp/* && "${APPLE_CLEANUP_FORCE_MANUAL_TRASH:-0}" != "1" ]]; then
     if osascript -e 'on run argv' \
                  -e 'set theItem to (POSIX file (item 1 of argv)) as alias' \
                  -e 'tell application "Finder" to delete theItem' \
                  -e 'end run' "$path" >/dev/null 2>&1; then
+      # Report a destination only when it is provably ours; if the name was
+      # taken, Finder renamed our item and $expected is someone else's file.
       if $expected_was_free && { [ -e "$expected" ] || [ -L "$expected" ]; }; then
-        echo "$expected"
-      elif [ ! -e "$path" ]; then
         echo "$expected"
       fi
       return 0
@@ -238,11 +245,11 @@ safe_rm_contents() {
     done < <(find "$path" -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
     return 0
   fi
-  local sz_b; sz_b=$(get_dir_size_bytes "$path")
-  [ "$sz_b" -le 0 ] 2>/dev/null && return 0
-  local sz_h; sz_h=$(format_bytes "$sz_b")
-
   if [ "$DRYRUN" = "1" ]; then
+    # Real runs sum per-child sizes; a whole-tree du here would be redundant.
+    local sz_b; sz_b=$(get_dir_size_bytes "$path")
+    [ "$sz_b" -le 0 ] 2>/dev/null && return 0
+    local sz_h; sz_h=$(format_bytes "$sz_b")
     success "$label: ${BOLD}${sz_h}${NC} $(L would_remove)"
     TOTAL_FREED=$((TOTAL_FREED + sz_b))
     TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
@@ -309,7 +316,7 @@ safe_rm_contents() {
       # Capture size BEFORE trashing; afterwards the child is gone and any size
       # read returns 0. Use get_size_bytes so files (not just dirs) are measured.
       local child_sz; child_sz=$(get_size_bytes "$child")
-      _td="$(_trash_item "$child" || true)"
+      _td="$(_trash_item "$child" direct || true)"
       if [ -n "$_td" ] || [ ! -e "$child" ]; then
         trashed_any=true
         trashed_bytes=$((trashed_bytes + child_sz))

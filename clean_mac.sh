@@ -403,6 +403,11 @@ _is_excluded() {
     case "$path" in
       $pat|$pat/*) IFS="$oldIFS"; [ "$_had_noglob" -eq 1 ] || set +f; return 0 ;;
     esac
+    # Removing an ancestor would remove the protected path with it.
+    # shortcut: literal-prefix check only, a glob pattern beneath $path is not detected.
+    case "$pat" in
+      "$path"/*) IFS="$oldIFS"; [ "$_had_noglob" -eq 1 ] || set +f; return 0 ;;
+    esac
   done
   IFS="$oldIFS"
   [ "$_had_noglob" -eq 1 ] || set +f
@@ -552,7 +557,8 @@ cat_index_by_id() {
 
 # Canonical "safe" quick-clean set, expressed by stable ids (not positions) so
 # reordering the CATEGORIES registry can never silently change what gets cleaned.
-SAFE_CLEAN_IDS=(user_cache system_cache logs temp_files trash browser_cache)
+# Trash comes first so items the other categories move to Trash stay recoverable.
+SAFE_CLEAN_IDS=(trash user_cache system_cache logs temp_files browser_cache)
 
 # ids → space-separated 1-based display numbers consumed by run_clean/selectors.
 cat_nums_by_ids() {
@@ -561,6 +567,25 @@ cat_nums_by_ids() {
     i=$(cat_index_by_id "$id")
     [ "$i" -ge 0 ] && printf '%s\n' "$((i + 1))"
   done
+}
+
+# Normalizes 1-based category numbers for a clean run: drops non-numeric input
+# (bash arithmetic would evaluate it as code) and runs Trash-emptying
+# categories first, so whatever later categories move to Trash is not
+# permanently deleted in the same run. Prints space-separated numbers.
+order_clean_nums() {
+  local n first="" rest="" trash_nums
+  trash_nums=" $(cat_nums_by_ids trash other_trash | tr '\n' ' ')"
+  for n in "$@"; do
+    n="${n// /}"
+    case "$n" in ''|*[!0-9]*) continue ;; esac
+    n=$((10#$n))
+    case "$trash_nums" in
+      *" $n "*) first="$first $n" ;;
+      *) rest="$rest $n" ;;
+    esac
+  done
+  echo "$first$rest"
 }
 
 # Safe-clean set minus any category that requires sudo. The scheduled LaunchAgent
@@ -642,13 +667,27 @@ json_escape_str() {
   s="${s//\"/\\\"}"
   s="${s//$'\n'/\\n}"
   s="${s//$'\t'/\\t}"
+  s="${s//$'\r'/\\r}"
   echo "$s"
+}
+
+# Emit oplog records as NR<US>ts<US>session<US>action<US>bytes<US>source<US>dest<US>category
+# in one awk pass (spawning awk per field made history/undo time out on big
+# logs). US (\037) is not IFS whitespace, so bash 3.2 `read` keeps empty fields.
+# Legacy 5-column lines get session "legacy" and no destination.
+oplog_records() {
+  awk -F'\t' '
+    /\037/ { next }
+    NF == 7 && $1 != "" { printf "%d\037%s\037%s\037%s\037%s\037%s\037%s\037%s\n", NR, $1, $2, $3, $4, $5, $6, $7; next }
+    NF == 5 && $1 != "" { printf "%d\037%s\037legacy\037%s\037%s\037%s\037\037%s\n", NR, $1, $2, $3, $4, $5 }
+  ' "$OPLOG_FILE"
 }
 
 # ─── Operation Log ───────────────────────────────────────────────────────────
 # Append-only audit trail of real deletions. Paired with trash-first deletion so
 # users can see what was removed and whether it is recoverable from Trash.
 OPLOG_FILE="$HOME/.cache/apple-cleanup/operations.log"
+_OPLOG_PREPARED=0
 OPLOG_MAX_BYTES="${APPLE_CLEANUP_OPLOG_MAX_BYTES:-5242880}"
 
 # Unique per script invocation; tags every oplog record from this run.
@@ -662,16 +701,20 @@ oplog_record() {
   local action="$1" bytes="$2" path="$3" trash_dest="${4:-}" category="${5:-}"
   path="${path//$'\t'/ }"; path="${path//$'\n'/ }"
   trash_dest="${trash_dest//$'\t'/ }"; trash_dest="${trash_dest//$'\n'/ }"
-  local dir; dir="$(dirname "$OPLOG_FILE")"
+  local dir="${OPLOG_FILE%/*}"
   [ -L "$dir" ] && return 0
-  mkdir -p "$dir" 2>/dev/null || return 0
+  # mkdir/chmod and the rotation check fork processes; once per run is enough
+  # (a cleanup writes one record per item). The builtin tests run every time.
+  if [ "$_OPLOG_PREPARED" != "1" ]; then
+    mkdir -p "$dir" 2>/dev/null || return 0
+    chmod 700 "$dir" 2>/dev/null || return 0
+  fi
   [ -d "$dir" ] && [ -O "$dir" ] && [ ! -L "$dir" ] || return 0
-  chmod 700 "$dir" 2>/dev/null || return 0
   [ -L "$OPLOG_FILE" ] && return 0
   if [ -e "$OPLOG_FILE" ]; then
     [ -f "$OPLOG_FILE" ] && [ -O "$OPLOG_FILE" ] || return 0
   fi
-  if [ -f "$OPLOG_FILE" ]; then
+  if [ "$_OPLOG_PREPARED" != "1" ] && [ -f "$OPLOG_FILE" ]; then
     local sz; sz=$(wc -c <"$OPLOG_FILE" 2>/dev/null | tr -d ' ')
     if [ -n "$sz" ] && [ "$sz" -gt "$OPLOG_MAX_BYTES" ] 2>/dev/null; then
       local lines half rotate_tmp
@@ -686,6 +729,7 @@ oplog_record() {
       fi
     fi
   fi
+  _OPLOG_PREPARED=1
   umask 077
   printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
     "$(date +%s)" "$SESSION_ID" "$action" "$bytes" "$path" "$trash_dest" "$category" \
@@ -1247,7 +1291,8 @@ clean_browser_full() {
 
   read -ra indices <<< "$selection"
   for num in ${indices[@]+"${indices[@]}"}; do
-    local real_idx=$((num - 1))
+    case "$num" in ''|*[!0-9]*) continue ;; esac  # arithmetic would evaluate it as code
+    local real_idx=$((10#$num - 1))
     if [ "$real_idx" -ge 0 ] && [ "$real_idx" -lt "${#avail_keys[@]}" ]; then
       warn "'${avail_names[$real_idx]}' $(L profile_warn)"
       if confirm "$(L are_you_sure)"; then
@@ -1334,7 +1379,8 @@ clean_ios_backups() {
   fi
 
   for num in ${indices[@]+"${indices[@]}"}; do
-    local real_idx=$((num - 1))
+    case "$num" in ''|*[!0-9]*) continue ;; esac  # arithmetic would evaluate it as code
+    local real_idx=$((10#$num - 1))
     if [ "$real_idx" -ge 0 ] && [ "$real_idx" -lt "${#backup_paths[@]}" ]; then
       safe_rm "${backup_paths[$real_idx]}" "iOS Backup: ${backup_names[$real_idx]}"
     fi
@@ -1499,7 +1545,8 @@ clean_app_leftovers() {
     fi
     
     for num in ${indices[@]+"${indices[@]}"}; do
-      local real_idx=$((num - 1))
+      case "$num" in ''|*[!0-9]*) continue ;; esac  # arithmetic would evaluate it as code
+      local real_idx=$((10#$num - 1))
       if [ "$real_idx" -ge 0 ] && [ "$real_idx" -lt "${#as_paths[@]}" ]; then
         local base_name="${as_names[$real_idx]}"
         safe_rm "${as_paths[$real_idx]}" "$base_name (Application Support)"
@@ -1619,7 +1666,7 @@ clean_developer() {
           local font_user="$HOME/Library/Caches/com.apple.FontRegistry"
           [ -d "$font_user" ] && safe_rm_contents "$font_user" "Font Caches"
           local d_font_clean
-          for d_font_clean in /var/folders/*/*/*/com.apple.FontRegistry /var/folders/*/*/C/com.apple.FontRegistry; do
+          for d_font_clean in /var/folders/*/*/*/com.apple.FontRegistry; do
             [ -d "$d_font_clean" ] && safe_rm_contents "$d_font_clean" "System Font Cache"
           done
           ;;
@@ -1724,22 +1771,23 @@ clean_developer() {
   clean_broken_symlinks_interactive
 }
 
-clean_broken_symlinks_silent() {
-  local scan_dirs=()
-  [ -d "/usr/local/bin" ]    && scan_dirs+=("/usr/local/bin")
-  [ -d "/opt/homebrew/bin" ] && scan_dirs+=("/opt/homebrew/bin")
-  [ -d "$HOME/.local/bin" ]  && scan_dirs+=("$HOME/.local/bin")
-  [ -d "$HOME/.config" ]     && scan_dirs+=("$HOME/.config")
-  [ -d "$HOME/bin" ]         && scan_dirs+=("$HOME/bin")
-
-  local broken_links=()
+# NUL-separated broken symlinks in the user's own bin/config dirs.
+# /usr/local/bin and /opt/homebrew/bin are outside every removal scope, so
+# safe_rm could only reject them and report a category error.
+_find_broken_symlinks() {
   local dir
-  for dir in ${scan_dirs[@]+"${scan_dirs[@]}"}; do
-    local link
-    while IFS= read -r link; do
-      [ -n "$link" ] && broken_links+=("$link")
-    done < <(find "$dir" -maxdepth 3 -type l ! -e 2>/dev/null)
+  for dir in "$HOME/.local/bin" "$HOME/.config" "$HOME/bin"; do
+    if [ -d "$dir" ]; then
+      find "$dir" -maxdepth 3 -type l ! -e -print0 2>/dev/null
+    fi
   done
+}
+
+clean_broken_symlinks_silent() {
+  local broken_links=() link
+  while IFS= read -r -d '' link; do
+    broken_links+=("$link")
+  done < <(_find_broken_symlinks)
 
   # Route through safe_rm so deletions honour the exclusion list, protected-path
   # guard, trash-first behaviour and the operation-log audit trail.
@@ -1756,21 +1804,10 @@ clean_broken_symlinks_silent() {
 clean_broken_symlinks_interactive() {
   echo ""
   echo -e "  ${BOLD}$(L scanning_broken_links)${NC}"
-  local scan_dirs=()
-  [ -d "/usr/local/bin" ]    && scan_dirs+=("/usr/local/bin")
-  [ -d "/opt/homebrew/bin" ] && scan_dirs+=("/opt/homebrew/bin")
-  [ -d "$HOME/.local/bin" ]  && scan_dirs+=("$HOME/.local/bin")
-  [ -d "$HOME/.config" ]     && scan_dirs+=("$HOME/.config")
-  [ -d "$HOME/bin" ]         && scan_dirs+=("$HOME/bin")
-
-  local broken_links=()
-  local dir
-  for dir in ${scan_dirs[@]+"${scan_dirs[@]}"}; do
-    local link
-    while IFS= read -r link; do
-      [ -n "$link" ] && broken_links+=("$link")
-    done < <(find "$dir" -maxdepth 3 -type l ! -e 2>/dev/null)
-  done
+  local broken_links=() link
+  while IFS= read -r -d '' link; do
+    broken_links+=("$link")
+  done < <(_find_broken_symlinks)
 
   if [ "${#broken_links[@]}" -eq 0 ]; then
     info "$(L no_broken_links)"
@@ -1817,7 +1854,8 @@ category_selector() {
 }
 
 run_clean() {
-  local selected_indices=("$@")
+  local selected_indices=()
+  read -ra selected_indices <<< "$(order_clean_nums "$@")"
   local fn_map=()
   local _i
   for _i in "${!CAT_IDS[@]}"; do fn_map+=("$(cat_field "$_i" clean_fn)"); done
@@ -1896,25 +1934,9 @@ do_history() {
     return 0
   fi
   printf "  %-19s  %-9s  %-10s  %-14s  %s\n" "When" "Action" "Size" "Category" "Path"
-  local line ts session action bytes path dest category when size_h tag nf
-  while IFS= read -r line; do
-    [ -z "$line" ] && continue
-    nf=$(awk -F'\t' '{print NF}' <<<"$line")
-    if [ "$nf" -eq 7 ]; then
-      # Bash 3.2's `read`/array splitting collapses empty fields with
-      # custom IFS (tab is IFS-whitespace), so fields are extracted via
-      # awk (which handles empty fields correctly) rather than `read`.
-      ts=$(awk -F'\t' '{print $1}' <<<"$line")
-      action=$(awk -F'\t' '{print $3}' <<<"$line")
-      bytes=$(awk -F'\t' '{print $4}' <<<"$line")
-      path=$(awk -F'\t' '{print $5}' <<<"$line")
-      category=$(awk -F'\t' '{print $7}' <<<"$line")
-    elif [ "$nf" -eq 5 ]; then
-      IFS=$'\t' read -r ts action bytes path category <<<"$line"
-      session=""; dest=""
-    else
-      continue
-    fi
+  local _id ts session action bytes path dest category when size_h tag
+  # shellcheck disable=SC2034  # _id, session and dest are positional placeholders
+  while IFS=$'\037' read -r _id ts session action bytes path dest category; do
     [ -z "$ts" ] && continue
     case "$ts" in *[!0-9]*) continue ;; esac
     case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
@@ -1923,7 +1945,7 @@ do_history() {
     tag="$action"
     [ "$action" = "trash" ] && tag="trash↺"
     printf "  %-19s  %-9s  %-10s  %-14s  %s\n" "$when" "$tag" "$size_h" "${category:-}" "$path"
-  done < <(tail -r "$OPLOG_FILE" 2>/dev/null)  # BSD-only: reverse lines (macOS target)
+  done < <(oplog_records | tail -r 2>/dev/null)  # BSD-only: reverse lines (macOS target)
 }
 
 scan_app_leftovers_subitems_json() {
@@ -2126,7 +2148,7 @@ scan_developer_subitems_json() {
   local font_paths=()
   [ -d "$HOME/Library/Caches/com.apple.FontRegistry" ] && font_paths+=("$HOME/Library/Caches/com.apple.FontRegistry")
   local d_font
-  for d_font in /var/folders/*/*/*/com.apple.FontRegistry /var/folders/*/*/C/com.apple.FontRegistry; do
+  for d_font in /var/folders/*/*/*/com.apple.FontRegistry; do
     [ -d "$d_font" ] && font_paths+=("$d_font")
   done
   local d_p
@@ -2310,31 +2332,8 @@ do_ops_json() {
   if [ ! -f "$OPLOG_FILE" ]; then
     printf '{"success":true,"sessions":[]}\n'; return 0
   fi
-  while IFS=$'\t' read -r id rest; do
-    local ts session action bytes source dest category recoverable nf
-    # Bash 3.2's `read`/array splitting collapses empty fields with custom
-    # IFS, so fields are extracted via awk (which handles empty fields
-    # correctly) rather than `read`.
-    nf=$(awk -F'\t' '{print NF}' <<<"$rest")
-    if [ "$nf" -eq 7 ]; then
-      ts=$(awk -F'\t' '{print $1}' <<<"$rest")
-      session=$(awk -F'\t' '{print $2}' <<<"$rest")
-      action=$(awk -F'\t' '{print $3}' <<<"$rest")
-      bytes=$(awk -F'\t' '{print $4}' <<<"$rest")
-      source=$(awk -F'\t' '{print $5}' <<<"$rest")
-      dest=$(awk -F'\t' '{print $6}' <<<"$rest")
-      category=$(awk -F'\t' '{print $7}' <<<"$rest")
-    elif [ "$nf" -eq 5 ]; then
-      # legacy 5-col line: ts action bytes path category
-      ts=$(awk -F'\t' '{print $1}' <<<"$rest")
-      action=$(awk -F'\t' '{print $2}' <<<"$rest")
-      bytes=$(awk -F'\t' '{print $3}' <<<"$rest")
-      source=$(awk -F'\t' '{print $4}' <<<"$rest")
-      category=$(awk -F'\t' '{print $5}' <<<"$rest")
-      session="legacy"; dest=""
-    else
-      continue
-    fi
+  local id ts session action bytes source dest category recoverable
+  while IFS=$'\037' read -r id ts session action bytes source dest category; do
     [ -z "$ts" ] && continue
     case "$bytes" in ''|*[!0-9]*) bytes=0 ;; esac
     recoverable=false
@@ -2352,7 +2351,7 @@ do_ops_json() {
     item="{\"id\":$id,\"source\":\"$esc_src\",\"trash_dest\":\"$esc_dest\",\"bytes\":${bytes:-0},\"category\":\"$esc_cat\",\"action\":\"$action\",\"recoverable\":$recoverable}"
     # Stash: SESSION<TAB>TS<TAB>BYTES<TAB>REC<TAB>ITEMJSON
     printf '%s\t%s\t%s\t%s\t%s\n' "$esc_session" "${ts:-0}" "${bytes:-0}" "$recoverable" "$item"
-  done < <(awk '{printf "%d\t%s\n", NR, $0}' "$OPLOG_FILE") \
+  done < <(oplog_records) \
     | awk -F'\t' '
         { sess=$1; ts=$2; by=$3; rec=$4; item=$5;
           if (!(sess in firstts)) { order[++k]=sess; firstts[sess]=ts }
@@ -2384,23 +2383,9 @@ do_restore_json() {
   fi
   # Build a quick membership test for explicit item ids.
   local want_ids=",$selector,"
-  local id ts session action bytes source dest category nf
-  while IFS=$'\t' read -r id rest; do
-    # Bash 3.2's `read`/array splitting collapses empty fields with custom
-    # IFS, so fields are extracted via awk (which handles empty fields
-    # correctly) rather than `read`, mirroring do_ops_json.
-    nf=$(awk -F'\t' '{print NF}' <<<"$rest")
-    if [ "$nf" -eq 7 ]; then
-      ts=$(awk -F'\t' '{print $1}' <<<"$rest")
-      session=$(awk -F'\t' '{print $2}' <<<"$rest")
-      action=$(awk -F'\t' '{print $3}' <<<"$rest")
-      bytes=$(awk -F'\t' '{print $4}' <<<"$rest")
-      source=$(awk -F'\t' '{print $5}' <<<"$rest")
-      dest=$(awk -F'\t' '{print $6}' <<<"$rest")
-      category=$(awk -F'\t' '{print $7}' <<<"$rest")
-    else
-      continue   # legacy 5-col lines are never restorable
-    fi
+  local id ts session action bytes source dest category
+  while IFS=$'\037' read -r id ts session action bytes source dest category; do
+    [ "$session" = "legacy" ] && continue   # legacy 5-col lines are never restorable
     [ -z "$ts" ] && continue
     # Selection filter
     if [ "$mode" = "session" ]; then
@@ -2412,11 +2397,17 @@ do_restore_json() {
     if [ "$action" != "trash" ]; then
       skipped="$skipped${skipped:+,}{\"source\":\"$esc_src\",\"reason\":\"not_recoverable\"}"; continue
     fi
-    # Guard: protected/system source
-    case "$source" in
-      /System/*|/usr/*|/bin/*|/sbin/*|/etc/*|/private/etc/*)
-        skipped="$skipped${skipped:+,}{\"source\":\"$esc_src\",\"reason\":\"protected\"}"; continue ;;
+    # The oplog is untrusted input: restore only into a scope the cleaner may
+    # mutate, and only from a Trash directory.
+    local dest_ok=false
+    case "$dest" in
+      */../*|*/..) ;;
+      "$HOME/.Trash"/*|/Volumes/*/.Trashes/*) dest_ok=true ;;
     esac
+    case "$source" in */../*|*/..) dest_ok=false ;; esac
+    if ! $dest_ok || [ "$(_removal_scope "$source")" = "protected" ]; then
+        skipped="$skipped${skipped:+,}{\"source\":\"$esc_src\",\"reason\":\"protected\"}"; continue
+    fi
     # Trash item gone
     if [ -z "$dest" ] || [ ! -e "$dest" ]; then
       skipped="$skipped${skipped:+,}{\"source\":\"$esc_src\",\"reason\":\"trash_missing\"}"; continue
@@ -2437,13 +2428,14 @@ do_restore_json() {
       done
       reason="renamed"
     fi
-    if mv "$dest" "$target" 2>/dev/null; then
+    # -n: never overwrite something created at $target since the check above.
+    if mv -n "$dest" "$target" 2>/dev/null && [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
       oplog_record "restore" "$bytes" "$target" "" "$category"
       restored="$restored${restored:+,}{\"source\":\"$(json_escape_str "$target")\",\"reason\":\"$reason\"}"
     else
       failed="$failed${failed:+,}{\"source\":\"$esc_src\",\"reason\":\"move_failed\"}"
     fi
-  done < <(awk '{printf "%d\t%s\n", NR, $0}' "$OPLOG_FILE")
+  done < <(oplog_records)
   printf '{"success":true,"restored":[%s],"skipped":[%s],"failed":[%s]}\n' \
     "$restored" "$skipped" "$failed"
 }
@@ -2665,9 +2657,7 @@ do_clean_json() {
   # ── Robust comma parsing for category numbers ──
   local cat_nums=()
   IFS=',' read -ra cat_nums <<< "$cats_csv"
-
-  # Run scan first (never let a non-zero scan abort JSON emission)
-  scan_all >/dev/null 2>&1 || true
+  read -ra cat_nums <<< "$(order_clean_nums ${cat_nums[@]+"${cat_nums[@]}"})"
 
   # Reset counters
   TOTAL_FREED=0
@@ -2690,10 +2680,7 @@ do_clean_json() {
   for _i in "${!CAT_IDS[@]}"; do fn_map+=("$(cat_field "$_i" clean_fn)"); done
 
   local idx
-  for idx in "${cat_nums[@]}"; do
-    # Trim whitespace
-    idx="${idx## }"; idx="${idx%% }"
-    [ -z "$idx" ] && continue
+  for idx in ${cat_nums[@]+"${cat_nums[@]}"}; do
     local real_idx=$((idx - 1))
     if [ "$real_idx" -ge 0 ] && [ "$real_idx" -lt "${#fn_map[@]}" ]; then
       local fn="${fn_map[$real_idx]}"
@@ -2757,7 +2744,7 @@ do_clean_json() {
   echo '  "details": ['
 
   local j=0
-  for entry in "${CLEAN_RESULTS[@]}"; do
+  for entry in ${CLEAN_RESULTS[@]+"${CLEAN_RESULTS[@]}"}; do
     IFS='|' read -r cat_id _ freed_h status <<< "$entry"
     local comma=","
     [ $((j + 1)) -eq ${#CLEAN_RESULTS[@]} ] && comma=""
@@ -2861,7 +2848,7 @@ do_remove_user_data() {
 
   local agent="$HOME/Library/LaunchAgents/com.cleanmac.weeklycleanup.plist"
   if [ -e "$agent" ] || [ -L "$agent" ]; then
-    if command -v launchctl >/dev/null 2>&1; then
+    if [ "$DRYRUN" != "1" ] && command -v launchctl >/dev/null 2>&1; then
       launchctl unload "$agent" >/dev/null 2>&1 || true
     fi
     safe_rm "$agent" "Weekly cleanup schedule"

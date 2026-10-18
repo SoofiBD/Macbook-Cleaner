@@ -188,7 +188,9 @@ clean_project_artifacts() {
 
   # Interactive CLI mode: list each artifact and confirm individually.
   local s label path identity sz_h
-  while IFS=$'\t' read -r s label path identity; do
+  # Records come in on fd 3 so confirm() reads the answer from the terminal,
+  # not the next artifact record.
+  while IFS=$'\t' read -r s label path identity <&3; do
     [ -n "$path" ] || continue
     sz_h=$(format_bytes "$s")
     if confirm "$label · $(basename "$(dirname "$path")") · $sz_h — sil?"; then
@@ -198,7 +200,7 @@ clean_project_artifacts() {
         warn "$(L invalid_artifact): $path"
       fi
     fi
-  done < <(_get_project_artifacts)
+  done 3< <(_get_project_artifacts)
 }
 
 scan_project_artifacts_subitems_json() {

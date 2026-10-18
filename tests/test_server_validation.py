@@ -788,6 +788,7 @@ class TestFileScanRoute(unittest.TestCase):
             handler = server.CleanupHandler.__new__(server.CleanupHandler)
             handler.path = route
             handler._require_loopback_host = Mock(return_value=True)
+            handler.headers = {}
             handler._send_json = Mock()
             handler._send_error_json = Mock()
             with patch.object(server, 'scan_files', return_value={'results': []}) as scan:
@@ -798,3 +799,87 @@ class TestFileScanRoute(unittest.TestCase):
                     handler.do_GET()
                 self.assertEqual(scan.call_count, 1)
                 self.assertEqual(handler._send_error_json.call_args.args[1], 409)
+
+
+    def test_cross_site_browser_get_cannot_start_api_work(self):
+        import server
+        from unittest.mock import Mock
+        handler = server.CleanupHandler.__new__(server.CleanupHandler)
+        handler.path = '/api/duplicates'
+        handler.headers = {'Sec-Fetch-Site': 'cross-site'}
+        handler._require_loopback_host = Mock(return_value=True)
+        handler._send_error_json = Mock()
+        with patch.object(server, 'scan_files') as scan:
+            handler.do_GET()
+        scan.assert_not_called()
+        self.assertEqual(handler._send_error_json.call_args.args[1], 403)
+
+
+class TestIdentitySelectionArgs(unittest.TestCase):
+    def test_installer_selection_passes_paths_and_identities(self):
+        import server
+        from unittest.mock import Mock
+        path = os.path.expanduser('~/Downloads/Setup.dmg')
+        handler = server.CleanupHandler.__new__(server.CleanupHandler)
+        handler._read_json_body = Mock(return_value=({
+            'categories': ['installer_artifacts'],
+            'installer_artifacts_selected': [{'path': path, 'identity': '1:2:3:4'}],
+        }, None))
+        handler._run_script = Mock(return_value=({'success': True}, None))
+        handler._send_json = Mock()
+        handler._handle_clean()
+        self.assertEqual(handler._run_script.call_args.args[0], [
+            '--clean-ids-json', 'installer_artifacts',
+            '--installer-artifact-sub', path,
+            '--installer-artifact-identities', '1:2:3:4',
+        ])
+
+
+class TestScanCacheGeneration(unittest.TestCase):
+    def test_cleanup_during_scan_neither_deadlocks_nor_caches_stale_result(self):
+        import server
+        from unittest.mock import Mock
+
+        def scan_with_concurrent_cleanup(*_args):
+            # Old code re-acquired the held _scan_lock here and deadlocked.
+            server._invalidate_scan_cache()
+            return {'success': True, 'partial': False, 'scan': {}}
+
+        server._invalidate_scan_cache()
+        handler = server.CleanupHandler.__new__(server.CleanupHandler)
+        handler._send_json = Mock()
+        with patch.object(server, '_run_bounded_scan', side_effect=scan_with_concurrent_cleanup):
+            handler._handle_scan()
+        handler._send_json.assert_called_once()
+        self.assertIsNone(server._scan_cache['data'])
+
+
+class TestProcessTimeoutWithDetachedChild(unittest.TestCase):
+    def test_timeout_is_enforced_when_a_setsid_child_holds_the_pipes(self):
+        import subprocess
+        import time
+        from server import _run_process
+        script = ("import subprocess, sys, time;"
+                  "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(8)'],"
+                  " start_new_session=True); time.sleep(30)")
+        started = time.monotonic()
+        with self.assertRaises(subprocess.TimeoutExpired):
+            _run_process([sys.executable, "-c", script], timeout=0.5)
+        self.assertLess(time.monotonic() - started, 6)
+
+
+class TestAtomicWriteFailure(unittest.TestCase):
+    def test_failed_write_closes_the_descriptor_once(self):
+        import tempfile
+        from pathlib import Path
+        import server
+
+        def boom(_handle):
+            raise ValueError("writer failed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(server.os, 'close', wraps=os.close) as close:
+                with self.assertRaises(ValueError):
+                    server._atomic_write(Path(tmp) / 'state.json', boom, binary=False)
+            close.assert_not_called()
+            self.assertEqual(os.listdir(tmp), [])

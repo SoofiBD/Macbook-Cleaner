@@ -345,6 +345,20 @@
             <!-- Dynamic accordion cards -->
           </div>
 
+          <!-- Cleanup progress: one row per category, In progress / Done -->
+          <section class="card clean-progress" id="cleanProgress" hidden>
+            <div class="clean-progress-head">
+              <strong id="cleanProgressTitle">Cleaning…</strong>
+              <span class="clean-progress-count" id="cleanProgressCount" aria-live="polite">0 of 0 done</span>
+            </div>
+            <div class="clean-progress-bar"><div class="clean-progress-fill" id="cleanProgressFill"></div></div>
+            <div class="clean-progress-tabs" role="tablist" aria-label="Cleanup tasks">
+              <button type="button" class="clean-progress-tab" role="tab" id="cleanTabActive" data-progress-tab="active" aria-selected="true">In progress <span id="cleanTabActiveCount">0</span></button>
+              <button type="button" class="clean-progress-tab" role="tab" id="cleanTabDone" data-progress-tab="done" aria-selected="false">Done <span id="cleanTabDoneCount">0</span></button>
+            </div>
+            <ul class="clean-progress-list" id="cleanProgressList" role="tabpanel"></ul>
+          </section>
+
           <!-- Sticky Bottom Clean Bar -->
           <div class="bottom-action-bar">
             <div style="display:flex;align-items:center;gap:16px;">

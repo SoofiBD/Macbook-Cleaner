@@ -47,7 +47,8 @@ async function dashboard(responses = {}) {
     alert: text => alerts.push(text),
     fetch: async (url, options) => {
       calls.push({ url, options });
-      const data = responses[url] ?? defaults[url];
+      let data = responses[url] ?? defaults[url];
+      if (typeof data === 'function') data = data(options?.body);
       if (data instanceof Error) throw data;
       return { ok: true, json: async () => data };
     },
@@ -56,7 +57,8 @@ async function dashboard(responses = {}) {
   const tab = async id => get('#sidebarMenu').fire('click', {
     closest: () => ({ dataset: { tab: id } }),
   });
-  return { get, tab, calls, alerts };
+  const setResponse = (url, value) => { responses[url] = value; };
+  return { get, tab, calls, alerts, setResponse };
 }
 
 test('file views render only API files, escape paths and support empty results', async () => {
@@ -87,8 +89,9 @@ test('cleanup routes the selected stable category and checked subitem', async ()
     ] } } }, '/api/clean': { success: true, freed_human: '10 B' },
   });
   await app.tab('smart-clean');
+  assert.doesNotMatch(app.get('#smartCleanCategoriesList').innerHTML, /checked/);
   await app.get('#smartCleanCategoriesList').fire('click', {
-    dataset: { subCat: 'developer', subId: 'pip_cache' }, checked: false,
+    dataset: { subCat: 'developer', subId: 'npm_cache' }, checked: true,
   });
   await app.get('#btnExecuteClean').fire('click');
   const clean = app.calls.find(call => call.url === '/api/clean');
@@ -98,9 +101,62 @@ test('cleanup routes the selected stable category and checked subitem', async ()
   });
 });
 
+test('rescan keeps a narrowed selection instead of re-selecting every item', async () => {
+  const scan = { success: true, scan: { developer: { size_bytes: 30, subitems: [
+    { id: 'npm_cache', size_bytes: 10 }, { id: 'pip_cache', size_bytes: 20 },
+  ] } } };
+  const app = await dashboard({ '/api/scan': scan, '/api/clean': { success: true } });
+  await app.tab('smart-clean');
+  const list = app.get('#smartCleanCategoriesList');
+  await list.fire('click', { dataset: { catCheck: 'developer' }, checked: true });
+  await list.fire('click', { dataset: { subCat: 'developer', subId: 'pip_cache' }, checked: false });
+  await app.get('#btnSmartRescan').fire('click');
+  await app.get('#btnExecuteClean').fire('click');
+  const clean = app.calls.find(call => call.url === '/api/clean');
+  assert.deepEqual(JSON.parse(clean.options.body).developer_selected, ['npm_cache']);
+});
+
+test('partially failed clean reports item errors and rescans', async () => {
+  const app = await dashboard({
+    '/api/scan': { success: true, scan: { logs: { size_bytes: 10 } } },
+    '/api/clean': { success: false, estimated_bytes: 5, estimated_human: '5 B',
+      errors: [{ category: 'logs', message: 'Permission denied: /x' }] },
+  });
+  const scansBefore = app.calls.filter(call => call.url === '/api/scan').length;
+  await app.get('#btnExecuteClean').fire('click');
+  await flush();
+  assert.equal(app.calls.filter(call => call.url === '/api/scan').length, scansBefore + 1);
+  assert.ok(app.alerts.some(text => /Partially Failed/.test(text) && /Permission denied: \/x/.test(text)
+    && /removed 5 B/.test(text)));
+});
+
 test('offline maintenance fails visibly without success messages', async () => {
   const app = await dashboard({ '/api/health': new Error('offline') });
   await app.get('#btnToolFlushDns').fire('click');
   assert.ok(app.alerts.some(text => /No maintenance was performed/.test(text)));
   assert.ok(!app.alerts.some(text => /successfully/.test(text)));
+});
+
+test('clean runs one request per category, trash first, and lists finished tasks', async () => {
+  const bodies = [];
+  const app = await dashboard({
+    '/api/scan': { success: true, scan: { logs: { size_bytes: 10 }, trash: { size_bytes: 20 } } },
+  });
+  await app.tab('smart-clean');
+  const list = app.get('#smartCleanCategoriesList');
+  await list.fire('click', { dataset: { catCheck: 'trash' }, checked: true });
+  app.setResponse('/api/clean', body => {
+    bodies.push(JSON.parse(body));
+    return bodies.length === 1
+      ? { success: false, error: 'Trash busy' }
+      : { success: true, estimated_bytes: 10, estimated_human: '10 B', details: [{ status: 'ok' }] };
+  });
+  await app.get('#btnExecuteClean').fire('click');
+  await app.get('#modalBtnConfirm').fire('click');
+  await flush();
+  assert.deepEqual(bodies.map(b => b.categories), [['trash'], ['logs']]);
+  const progress = app.get('#cleanProgressList').innerHTML;
+  assert.match(progress, /clean-task-failed[\s\S]*Trash busy/);
+  assert.match(progress, /clean-task-done[\s\S]*Removed 10 B/);
+  assert.equal(app.get('#cleanProgressCount').textContent, '2 of 2 done');
 });

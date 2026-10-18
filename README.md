@@ -11,8 +11,7 @@ Clean Mac safely removes unnecessary data on macOS such as caches, logs, tempora
 > **Lightweight & no-compiler philosophy:** This tool is deliberately
 > minimalist. There is **no** build step, no `npm install`, no compiler, and no
 > external dependency. A single-file server runs on the built-in Python, with
-> vanilla JavaScript and locally vendored animation libraries — **no CDN or
-> network required**.
+> vanilla JavaScript and CSS animations — **no CDN or network required**.
 
 ---
 
@@ -96,7 +95,7 @@ The dashboard opens automatically in your browser at `http://localhost:8080`. �
 - 🩺 **Read-only Health view** — checks macOS compatibility, disk pressure,
   private state permissions, Trash redirection, system tools and the weekly schedule without changing anything
 - ⏱️ Bounded, cancellable category scans preserve successful partial results
-- 🌐 Lightweight web dashboard (start with a single command), animated with **GSAP** (vendored locally — no CDN/network), with reduced-motion support and full graceful fallback if scripts fail to load
+- 🌐 Lightweight web dashboard (start with a single command), with CSS animations and reduced-motion support
 - 🛡️ Avoids touching critical system files by default
 - 🍎 Compatible with Bash 3.2; macOS 13+ is the supported baseline (CI covers macOS 14 and 15)
 
@@ -179,7 +178,7 @@ apple-cleanup/
 ├── lib/core/                 # Trash-first executor and fail-closed path policy
 ├── lib/categories/           # Project, app-uninstaller and installer modules
 ├── SECURITY.md               # Public deletion-safety contract
-├── THIRD_PARTY_NOTICES.md    # Vendored component notices
+├── THIRD_PARTY_NOTICES.md    # Third-party reference notices
 ├── docs/                     # Architecture and security design
 ├── tests/                    # Python and Node regression/security tests
 ├── web/
@@ -187,7 +186,7 @@ apple-cleanup/
 │   ├── index.html            # Dashboard UI
 │   ├── style.css             # Styles
 │   ├── script.js             # Frontend logic
-│   └── vendor/               # Vendored GSAP (no CDN/network)
+│   └── scanutil.js           # Scan result helpers
 ├── README.md
 ├── LICENSE
 └── .gitignore
@@ -266,8 +265,8 @@ The dashboard exposes an API that can delete files, so it is locked down:
 
 ## 📄 License
 
-Project-authored code is MIT-licensed. Vendored files retain their own license
-headers; see [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Mole was used only
-as an architectural reference and no GPLv3 source or branding is incorporated.
+Project-authored code is MIT-licensed. Mole was used only as an architectural
+reference and no GPLv3 source or branding is incorporated; see
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 MIT License — see [LICENSE](LICENSE) for details.

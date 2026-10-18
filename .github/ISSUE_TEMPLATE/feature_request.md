@@ -22,7 +22,7 @@ Other approaches you thought about and why you ruled them out.
 ## Dependency check
 
 Clean Mac is strictly **no-dependency / no-compiler**: pure vanilla JS, built-in
-Python 3, locally vendored GSAP, no CDNs or build steps.
+Python 3, no CDNs or build steps.
 
 - [ ] This feature can be implemented **without** adding external npm/pip dependencies.
 - [ ] This feature does **not** require a CDN or external network request.

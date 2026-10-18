@@ -2,6 +2,7 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .DS_Store
+Icon?
 # Documentation is source-controlled; only generated render output is ignored.
 docs/generated/
 # diagnostic / runtime artifacts
@@ -10,5 +11,3 @@ diagnose-log.txt
 scan-out.json
 scan-err.txt
 scan-debug.txt
-
-

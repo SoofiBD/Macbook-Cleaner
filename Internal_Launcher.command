@@ -4,7 +4,7 @@
 #
 # Hidden background launcher. Called by CLICK_TO_START.command.
 # Runs web/server.py; the server opens the browser itself
-# (http://localhost:8080). Closing this window stops the server.
+# (http://127.0.0.1:8080). Closing this window stops the server.
 #---------------------------------------------------------------------------
 
 # Move into this script's folder (no matter where the double-click came from)
@@ -21,7 +21,7 @@ if ! command -v python3 >/dev/null 2>&1; then
 	exit 1
 fi
 
-echo "🍎 Starting Apple Cleanup...  http://localhost:${PORT}"
+echo "🍎 Starting Apple Cleanup...  http://127.0.0.1:${PORT}"
 echo "   Close this window or press Ctrl+C to stop."
 echo ""
 

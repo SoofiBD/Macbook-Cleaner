@@ -18,8 +18,6 @@ mind for every change:
   What you write is what ships. The browser loads the source files directly.
 - **No CDNs or external network requests.** The dashboard must work fully offline.
   Do not add `<script src="https://...">`, web fonts, analytics, or telemetry.
-- **GSAP stays local.** Animation libraries live in `web/vendor/` and are loaded
-  from disk. Do not swap them for a CDN link or add new third-party JS libraries.
 - **Backend = built-in Python 3 only.** `web/server.py` uses the standard library
   (`http.server`, `json`, etc.). No `pip install`, no Flask/FastAPI/Django.
 - **Cleanup logic = portable Bash.** `clean_mac.sh` targets macOS and must pass
@@ -43,7 +41,6 @@ If you think a change genuinely needs a dependency, open an issue to discuss it
 | `lib/categories/` | Project, app-uninstaller, and installer-file domain modules |
 | `web/server.py` | Local Python dashboard server |
 | `web/index.html`, `style.css`, `script.js` | Dashboard UI (vanilla) |
-| `web/vendor/` | Locally vendored GSAP — no CDN |
 | `docs/` | Architecture and security design |
 | `SECURITY.md` | Supported deletion-safety contract |
 | `tests/` | Python `pytest` + Node `node:test` suites |

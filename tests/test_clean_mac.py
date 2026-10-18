@@ -641,7 +641,9 @@ def test_safe_clean_ids_map_to_expected_numbers():
     # id→display-number mapping so reordering CATEGORIES is caught instead of
     # silently changing what gets cleaned (frontend index ↔ backend order).
     nums = _source_eval('cat_nums_by_ids "${SAFE_CLEAN_IDS[@]}"').split()
-    assert nums == ["1", "2", "4", "5", "7", "8"], nums
+    # trash (7) first: emptying Trash after the others would permanently
+    # delete what they had just moved there.
+    assert nums == ["7", "1", "2", "4", "5", "8"], nums
 
 
 def test_category_registry_order_is_stable():
@@ -832,3 +834,67 @@ do_clean_json 5
     assert data["estimated_bytes"] > 0
     assert not removable.exists()
     assert blocked.exists()
+
+
+def test_clean_numbers_run_trash_first_and_drop_non_numeric_input():
+    nums = _source_eval("order_clean_nums 1 ' 4' 7 abc 08 'HOME[$(echo PWNED)]'")
+    assert nums.split() == ["7", "1", "4", "8"], nums
+    assert "PWNED" not in nums
+
+
+def test_clean_json_survives_empty_and_non_numeric_selection(tmp_path):
+    for cats in ("99", "user_cache"):
+        data = run_clean(tmp_path, cats)
+        assert data["details"] == [], cats
+
+
+def test_trash_emptied_before_trash_first_categories_run(tmp_path):
+    make_dir_with_bytes(tmp_path / "Library/Caches/com.example.app", kb=8)
+    (tmp_path / ".Trash").mkdir()
+    run_clean(tmp_path, "1,7")  # user_cache, then trash, as the browser may send
+    assert (tmp_path / ".Trash/blob.bin").exists()
+
+
+def test_exclusion_protects_paths_nested_below_the_cleaned_child(tmp_path):
+    inner = tmp_path / "Library/Caches/com.foo/keep/inner"
+    inner.mkdir(parents=True)
+    (inner / "precious").write_text("keep me")
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_EXCLUDE=str(inner))
+    out = subprocess.run(
+        ["bash", str(SCRIPT), "--clean-json", "1"],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert out.returncode == 0, out.stderr
+    assert (inner / "precious").exists()
+
+
+def test_downloads_protection_is_case_insensitive(tmp_path):
+    artifact = tmp_path / "Downloads/proj/node_modules"
+    artifact.mkdir(parents=True)
+    lowered = str(tmp_path / "downloads/proj/node_modules")
+    result = _validate_path(tmp_path, lowered, category="project_artifacts")
+    assert result.returncode != 0
+
+
+def test_open_file_snapshot_detects_files_held_open_under_home(tmp_path):
+    home = Path(os.path.realpath(tmp_path))
+    busy = home / "Library/Caches/com.example.busy"
+    idle = home / "Library/Caches/com.example.idle"
+    busy.mkdir(parents=True)
+    idle.mkdir(parents=True)
+    (busy / "data.db").write_text("x")
+    holder = subprocess.Popen(
+        ["bash", "-c", 'exec 9<"$1"; sleep 30', "_", str(busy / "data.db")])
+    try:
+        script = (
+            f'source "{SCRIPT}" --__noop >/dev/null 2>&1; set +e; '
+            f'sleep 0.5; _path_has_open_files "{busy}"; echo "busy=$?"; '
+            f'_path_has_open_files "{idle}"; echo "idle=$?"'
+        )
+        out = subprocess.run(["bash", "-c", script], env=dict(os.environ, HOME=str(home)),
+                             capture_output=True, text=True, timeout=30)
+    finally:
+        holder.kill()
+        holder.wait()
+    assert "busy=0" in out.stdout, out.stdout + out.stderr
+    assert "idle=1" in out.stdout, out.stdout + out.stderr

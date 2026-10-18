@@ -7,10 +7,21 @@
 # is treated as an escape and rejected.
 _removal_scope() {
   local path="$1"
+  # APFS is case-insensitive, so "$HOME/downloads" is the protected folder too.
+  local downloads_scope="" had_nocase=0
+  shopt -q nocasematch && had_nocase=1
+  shopt -s nocasematch
+  case "$path" in
+    "$HOME/Downloads") downloads_scope="protected" ;;
+    "$HOME/Downloads"/*) downloads_scope="installer_download" ;;
+  esac
+  [ "$had_nocase" -eq 1 ] || shopt -u nocasematch
+  if [ -n "$downloads_scope" ]; then
+    echo "$downloads_scope"
+    return 0
+  fi
   case "$path" in
     "$HOME") echo "protected" ;;
-    "$HOME/Downloads") echo "protected" ;;
-    "$HOME/Downloads"/*) echo "installer_download" ;;
     "$HOME"/*) echo "home" ;;
     /tmp/*|/private/tmp/*|/var/folders/*|/private/var/folders/*) echo "temporary" ;;
     /Library/Caches/*) echo "system_cache" ;;
@@ -134,28 +145,65 @@ _path_contains_database() {
 # Return 0 when lsof found an open file, 1 when it found none, and 2 when the
 # inspection was unavailable or exceeded its deadline. The deadline prevents a
 # recursive lsof walk from hanging a cleanup on large browser profiles.
-_path_has_open_files() {
-  local path="$1" lsof_bin pid loops=0 status
-  lsof_bin=$(command -v lsof 2>/dev/null) || return 2
-  "$lsof_bin" -nP +D "$path" >/dev/null 2>&1 &
+# One system-wide open-file snapshot, reused for up to 2 seconds. Running
+# `lsof +D <dir>` per cleaned directory walked each tree and cost 0.15-1.3 s
+# per call; a full `lsof -F n` listing costs ~0.1 s and covers every path.
+_OPEN_FILES_SNAPSHOT=""
+_OPEN_FILES_AT=-100
+
+_refresh_open_files_snapshot() {
+  [ -n "$_OPEN_FILES_SNAPSHOT" ] && [ $((SECONDS - _OPEN_FILES_AT)) -lt 2 ] && return 0
+  local lsof_bin pid loops=0
+  lsof_bin=$(command -v lsof 2>/dev/null) || return 1
+  if [ -z "$_OPEN_FILES_SNAPSHOT" ]; then
+    _OPEN_FILES_SNAPSHOT=$(mktemp "${TMPDIR:-/tmp}/apple-cleanup-lsof.XXXXXX") || return 1
+    trap 'rm -f "$_OPEN_FILES_SNAPSHOT"' EXIT
+  fi
+  # Every guarded path is under $HOME, so keep only those lines (resolved,
+  # as lsof reports them); per-path greps then scan a few KB, not megabytes.
+  local home_physical
+  home_physical=$(cd -P "$HOME" 2>/dev/null && pwd -P) || home_physical="$HOME"
+  # awk fails when lsof printed nothing at all (it always lists itself), so a
+  # broken lsof reads as "cannot verify", never as "nothing open".
+  { "$lsof_bin" -nP -F n 2>/dev/null | P="n$home_physical/" awk '
+      BEGIN { p = ENVIRON["P"] } index($0, p) == 1 { print } END { exit NR == 0 }
+    ' >"$_OPEN_FILES_SNAPSHOT"; } &
   pid=$!
   while kill -0 "$pid" 2>/dev/null; do
-    if [ "$loops" -ge 30 ]; then
+    if [ "$loops" -ge 60 ]; then  # 3 s cap
       kill "$pid" 2>/dev/null || true
       wait "$pid" 2>/dev/null || true
-      return 2
+      _OPEN_FILES_AT=-100
+      return 1
     fi
-    sleep 0.1
+    sleep 0.05
     loops=$((loops + 1))
   done
-  if wait "$pid" 2>/dev/null; then status=0; else status=$?; fi
-  [ "$status" -eq 0 ] && return 0
+  wait "$pid" 2>/dev/null || { _OPEN_FILES_AT=-100; return 1; }
+  _OPEN_FILES_AT=$SECONDS
+}
+
+# 0 = something under path is open, 1 = nothing open, 2 = cannot verify.
+_path_has_open_files() {
+  local path="$1" physical status
+  _refresh_open_files_snapshot || return 2
+  # lsof reports resolved paths.
+  physical=$(cd -P "$path" 2>/dev/null && pwd -P) || physical="$path"
+  # Lines are "n<path>". A substring hit elsewhere in a line can only cause a
+  # false positive, which skips the item: the safe direction.
+  status=0
+  grep -qF -e "n$physical/" "$_OPEN_FILES_SNAPSHOT" && return 0 || status=$?
+  [ "$status" -eq 1 ] || return 2
+  grep -qxF -e "n$physical" "$_OPEN_FILES_SNAPSHOT" && return 0 || status=$?
   [ "$status" -eq 1 ] && return 1
   return 2
 }
 
+_RUNNING_APPS=""
+_RUNNING_APPS_AT=-100
+
 _path_owner_is_running() {
-  local path="$1" owner bundle_id="" app_list
+  local path="$1" owner bundle_id=""
   owner=$(basename "$path")
   case "$path" in
     "$HOME/Library/Safari"*) bundle_id="com.apple.Safari" ;;
@@ -172,8 +220,12 @@ _path_owner_is_running() {
   esac
   [ -n "$bundle_id" ] || return 1
   [ -x /usr/bin/lsappinfo ] || return 1
-  app_list=$(/usr/bin/lsappinfo list 2>/dev/null) || return 1
-  case "$app_list" in *"$bundle_id"*) return 0 ;; esac
+  # Cached for 2 seconds: this runs once per cleaned directory.
+  if [ $((SECONDS - _RUNNING_APPS_AT)) -ge 2 ]; then
+    _RUNNING_APPS=$(/usr/bin/lsappinfo list 2>/dev/null) || return 1
+    _RUNNING_APPS_AT=$SECONDS
+  fi
+  case "$_RUNNING_APPS" in *"$bundle_id"*) return 0 ;; esac
   return 1
 }
 

@@ -20,7 +20,6 @@
 - [ ] Does **not** add runtime npm/pip dependencies.
 - [ ] Does **not** add a CDN link or any external network request.
 - [ ] Does **not** introduce a build step or compiler (frontend stays vanilla JS).
-- [ ] Any GSAP/animation code remains locally vendored in `web/vendor/`.
 
 ### Testing
 

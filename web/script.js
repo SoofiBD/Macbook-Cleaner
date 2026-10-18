@@ -138,7 +138,9 @@
     appsList: [],
     largeFiles: [],
     dupGroups: [],
-    historyList: []
+    historyList: [],
+    cleanTasks: [],
+    cleanProgressTab: 'active'
   };
 
   /* ══════════════════════════════════════════════════════════
@@ -148,7 +150,7 @@
     if (!bytes || bytes <= 0) return '0 B';
     const base = useDecimal ? 1000 : 1024;
     const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    const i = Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(base)));
+    const i = Math.max(0, Math.min(units.length - 1, Math.floor(Math.log(bytes) / Math.log(base))));
     return (bytes / Math.pow(base, i)).toFixed(i === 0 ? 0 : 1) + ' ' + units[i];
   }
 
@@ -399,7 +401,10 @@
     }
 
     if (data?.success === false) {
-      throw new Error(data.error || data.message || 'Operation failed.');
+      const itemErrors = Array.isArray(data.errors) ? data.errors.map(e => e?.message).filter(Boolean) : [];
+      const err = new Error(data.error || data.message || itemErrors.join('; ') || 'Operation failed.');
+      err.data = data; // partial results (e.g. freed_human) for callers that report them
+      throw err;
     }
     return data;
   }
@@ -608,7 +613,7 @@
               ${subitems.map(sub => `
                 <div class="subitem-entry">
                   <div class="subitem-left">
-                    ${ScanUtil.FILELIST_CATEGORIES.includes(cat.key) ? `<input type="checkbox" class="cat-checkbox" ${state.selectedSubitems[cat.key]?.has(sub.id) ? 'checked' : ''} data-sub-cat="${cat.key}" data-sub-id="${escapeHtml(sub.id)}" aria-label="Select ${escapeHtml(sub.name || sub.id)}" />` : ''}
+                    ${ScanUtil.FILELIST_CATEGORIES.includes(cat.key) ? `<input type="checkbox" class="cat-checkbox" ${isChecked && state.selectedSubitems[cat.key]?.has(sub.id) ? 'checked' : ''} data-sub-cat="${cat.key}" data-sub-id="${escapeHtml(sub.id)}" aria-label="Select ${escapeHtml(sub.name || sub.id)}" />` : ''}
                     <div>
                       <div class="subitem-name">${escapeHtml(sub.name || sub.id)}</div>
                       <div class="subitem-path">${escapeHtml(sub.path || '')}</div>
@@ -649,6 +654,7 @@
   $('#smartCleanCategoriesList')?.addEventListener('click', (e) => {
     if (e.target.dataset.subCat) {
       const key = e.target.dataset.subCat;
+      if (!state.selectedCategories.has(key)) state.selectedSubitems[key] = new Set();
       const selected = state.selectedSubitems[key] ||= new Set();
       if (e.target.checked) selected.add(e.target.dataset.subId);
       else selected.delete(e.target.dataset.subId);
@@ -727,53 +733,136 @@
     }
   });
 
+  // One request per category so the progress panel can report each as it
+  // finishes. Trash categories go first: emptying Trash after another category
+  // moved items there would permanently delete them.
+  const TRASH_CATEGORIES = ['trash', 'other_trash'];
+  const CLEAN_DONE_STATES = ['done', 'skipped', 'failed'];
+
+  function renderCleanProgress(finished = false) {
+    const tasks = state.cleanTasks;
+    const done = tasks.filter(t => CLEAN_DONE_STATES.includes(t.status));
+    const active = tasks.filter(t => !CLEAN_DONE_STATES.includes(t.status));
+    const shown = state.cleanProgressTab === 'done' ? done : active;
+
+    $('#cleanProgressTitle').textContent = finished
+      ? (state.dryRun ? 'Dry run finished' : 'Cleanup finished')
+      : (state.dryRun ? 'Simulating cleanup…' : 'Cleaning…');
+    $('#cleanProgressCount').textContent = `${done.length} of ${tasks.length} done`;
+    $('#cleanProgressFill').style.width = `${tasks.length ? (done.length / tasks.length) * 100 : 0}%`;
+    $('#cleanTabActiveCount').textContent = String(active.length);
+    $('#cleanTabDoneCount').textContent = String(done.length);
+    $('#cleanTabActive')?.setAttribute('aria-selected', String(state.cleanProgressTab === 'active'));
+    $('#cleanTabDone')?.setAttribute('aria-selected', String(state.cleanProgressTab === 'done'));
+
+    const icon = { done: 'ic-check', failed: 'ic-alert-triangle', skipped: 'ic-info-circle', pending: 'ic-history' };
+    const label = t => ({
+      pending: 'Queued',
+      running: 'In progress',
+      done: `${state.dryRun ? 'Would remove' : 'Removed'} ${t.size}${t.note ? ` · ${t.note}` : ''}`,
+      skipped: t.note || 'Skipped',
+      failed: t.note || 'Failed',
+    })[t.status];
+    $('#cleanProgressList').innerHTML = shown.length
+      ? shown.map(t => `
+          <li class="clean-task clean-task-${t.status}">
+            ${t.status === 'running'
+              ? '<span class="clean-task-spinner" aria-hidden="true"></span>'
+              : `<svg class="clean-task-icon" aria-hidden="true"><use href="#${icon[t.status]}"/></svg>`}
+            <span>${escapeHtml(t.name)}</span>
+            <span class="clean-task-detail">${escapeHtml(label(t))}</span>
+          </li>`).join('')
+      : `<li class="clean-progress-empty">${state.cleanProgressTab === 'done' ? 'Nothing finished yet.' : 'No tasks in progress.'}</li>`;
+  }
+
+  $('#cleanProgress')?.addEventListener('click', (e) => {
+    const tab = e.target.closest('[data-progress-tab]');
+    if (!tab) return;
+    state.cleanProgressTab = tab.dataset.progressTab;
+    renderCleanProgress(!state.cleanTasks.some(t => !CLEAN_DONE_STATES.includes(t.status)));
+  });
+
+  async function cleanOneCategory(task) {
+    try {
+      const payload = {
+        ...ScanUtil.buildSelectedCleanPayload(state.scanData, [task.key], state.selectedSubitems),
+        dry_run: state.dryRun
+      };
+      const res = await apiFetch('/api/clean', { method: 'POST', body: JSON.stringify(payload) });
+      // estimated_bytes is what was removed or moved to Trash; the df-based
+      // freed_bytes stays 0 for Trash moves, which free nothing until emptied.
+      task.bytes = res.estimated_bytes || 0;
+      task.size = res.estimated_human || formatBytes(task.bytes);
+      const detail = Array.isArray(res.details) ? res.details[0]?.status : '';
+      if (detail === 'skipped') {
+        task.status = 'skipped';
+        task.note = 'Skipped (needs administrator access)';
+      } else {
+        task.status = 'done';
+        if (detail === 'partial') task.note = 'some items in use were skipped';
+      }
+    } catch (err) {
+      task.status = 'failed';
+      task.bytes = err.data?.estimated_bytes || 0;
+      task.note = err.data?.estimated_human ? `${err.message} (removed ${err.data.estimated_human})` : err.message;
+    }
+  }
+
   async function performClean() {
     const btn = $('#btnExecuteClean');
     if (btn) { btn.disabled = true; btn.textContent = state.dryRun ? 'Simulating...' : 'Cleaning...'; }
+    // A scan finishing mid-clean would cache and display pre-clean results.
+    const scanButtons = [$('#btnQuickScan'), $('#btnSmartRescan')].filter(Boolean);
+    scanButtons.forEach(b => { b.disabled = true; });
 
     const categories = Array.from(state.selectedCategories).filter(k => state.scanData?.scan?.[k]);
+    categories.sort((a, b) => TRASH_CATEGORIES.includes(b) - TRASH_CATEGORIES.includes(a));
     termLog(`Initiating ${state.dryRun ? 'DRY-RUN simulation' : 'cleaning'} for ${categories.length} categories...`, 'warning');
 
+    if (!state.backendOnline) {
+      showToast({ type: 'error', tag: 'Clean Error', title: 'Cleanup Failed',
+        message: 'Backend unavailable. No cleanup was performed.', duration: 6500 });
+      scanButtons.forEach(b => { b.disabled = false; });
+      if (btn) { btn.disabled = false; btn.textContent = 'Clean Selected Space'; }
+      return;
+    }
+
+    state.cleanTasks = categories.map(key => ({ key, name: CAT_BY_KEY[key]?.name || key, status: 'pending', size: '', note: '' }));
+    state.cleanProgressTab = 'active';
+    const panel = $('#cleanProgress');
+    if (panel) panel.hidden = false;
+    renderCleanProgress();
+
     try {
-      if (state.backendOnline) {
-        const payload = {
-          ...ScanUtil.buildSelectedCleanPayload(state.scanData, categories, state.selectedSubitems),
-          dry_run: state.dryRun
-        };
-        const res = await apiFetch('/api/clean', {
-          method: 'POST',
-          body: JSON.stringify(payload)
-        });
-
-        termLog(`Clean finished successfully! Freed: ${res.freed_human || '0 B'}.`, 'success');
-        showToast({
-          type: 'success',
-          tag: state.dryRun ? 'Dry Run' : 'Clean Complete',
-          title: state.dryRun ? 'Dry Run Simulation Finished' : 'Cleanup Complete',
-          message: state.dryRun
-            ? `Simulation finished. Would free approximately: ${res.freed_human || '0 B'}`
-            : `Successfully freed ${res.freed_human || '0 B'} of disk space!`,
-          duration: 5500
-        });
-      } else {
-        throw new Error('Backend unavailable. No cleanup was performed.');
+      for (const task of state.cleanTasks) {
+        task.status = 'running';
+        renderCleanProgress();
+        await cleanOneCategory(task);
+        termLog(`${task.name}: ${task.status}${task.note ? ` (${task.note})` : ''}`, task.status === 'failed' ? 'error' : 'success');
+        renderCleanProgress();
       }
-
-      // Refresh scan
-      await triggerScan();
-    } catch (err) {
-      termLog(`Clean failed: ${err.message}`, 'error');
-      showToast({
-        type: 'error',
-        tag: 'Clean Error',
-        title: 'Cleanup Failed',
-        message: `Error during cleanup: ${err.message}`,
-        duration: 6500
-      });
     } finally {
+      state.cleanProgressTab = 'done';
+      renderCleanProgress(true);
+      scanButtons.forEach(b => { b.disabled = false; });
       if (btn) { btn.disabled = false; btn.textContent = 'Clean Selected Space'; }
     }
+
+    const failed = state.cleanTasks.filter(t => t.status === 'failed');
+    const total = formatBytes(state.cleanTasks.reduce((sum, t) => sum + (t.bytes || 0), 0));
+    showToast({
+      type: failed.length ? 'error' : 'success',
+      tag: state.dryRun ? 'Dry Run' : 'Clean Complete',
+      title: failed.length ? 'Cleanup Partially Failed' : (state.dryRun ? 'Dry Run Simulation Finished' : 'Cleanup Complete'),
+      message: failed.length
+        ? `${failed.length} of ${state.cleanTasks.length} categories failed: ${failed.map(t => `${t.name}: ${t.note}`).join('; ')}. Removed: ${total}.`
+        : (state.dryRun ? `Simulation finished. Would remove approximately ${total}.` : `Removed ${total}.`),
+      duration: failed.length ? 6500 : 5500
+    });
+    // Refresh in the background; the results above are already final.
+    triggerScan();
   }
+
 
   /* ══════════════════════════════════════════════════════════
      System Maintenance Tools Execution
@@ -948,15 +1037,14 @@
       `This will completely delete ${appName} and all associated cache and configuration files from ~/Library. Are you sure?`,
       async () => {
         termLog(`Uninstalling app: ${appName}...`, 'warning');
+        btn.disabled = true;
         try {
           if (!state.backendOnline) throw new Error('Backend unavailable. No application was removed.');
-          if (state.backendOnline) {
-            await apiFetch('/api/uninstall', {
-              method: 'POST',
-              body: JSON.stringify({ target_id: targetId, app_name: appName })
-            });
-            termLog(`App ${appName} uninstalled successfully.`, 'success');
-          }
+          await apiFetch('/api/uninstall', {
+            method: 'POST',
+            body: JSON.stringify({ target_id: targetId, app_name: appName })
+          });
+          termLog(`App ${appName} uninstalled successfully.`, 'success');
           state.appsList = state.appsList.filter(a => targetId ? a.target_id !== targetId : a.name !== appName);
           renderAppsGrid($('#appSearchInput')?.value || '');
           showToast({
@@ -966,6 +1054,7 @@
             message: `Application "${appName}" removed.`
           });
         } catch (err) {
+          btn.disabled = false;
           showToast({
             type: 'error',
             tag: 'Uninstall Error',
@@ -1090,9 +1179,12 @@
       if (state.backendOnline) {
         const scanResult = await apiFetch('/api/scan');
         state.scanData = scanResult;
-        state.selectedCategories = new Set([...state.selectedCategories].filter(key => scanResult.scan?.[key]));
+        // Keep only items the user still has checked; never re-select by default.
+        const previous = state.selectedSubitems;
         state.selectedSubitems = Object.fromEntries(Object.entries(scanResult.scan || {}).map(([key, info]) =>
-          [key, new Set((info.subitems || []).map(item => item.id))]));
+          [key, new Set((info.subitems || []).map(item => item.id).filter(id => previous[key]?.has(id)))]));
+        state.selectedCategories = new Set([...state.selectedCategories].filter(key => scanResult.scan?.[key]
+          && (!ScanUtil.FILELIST_CATEGORIES.includes(key) || state.selectedSubitems[key].size > 0)));
         termLog(scanResult.partial ? 'Partial scan: unavailable categories have been disabled.' : 'Scan completed successfully.', scanResult.partial ? 'warning' : 'success');
       } else {
         state.scanData = { scan: {} };
