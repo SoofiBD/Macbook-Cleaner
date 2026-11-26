@@ -13,12 +13,16 @@ public API rather than an implementation detail.
 - Critical system roots are never cleanup targets. Downloads is protected
   except for direct `.dmg`, `.pkg`, and `.iso` files that the user selects
   individually from a fresh scan and whose filesystem identity still matches.
-- Dry-run executes no file or owner-command mutation.
+- Dry-run executes no file or owner-command mutation. Maintenance tools
+  (DNS flush, memory purge, Spotlight reindex) and restore are skipped.
 - User data is Trash-first unless the category is explicitly documented as
   permanent, such as emptying Trash or system cache cleanup.
 - Project artifacts are tied to their scan-time device/inode identity and exact
   project manifest, then checked again immediately before Trash.
 - Open cache/profile files and unverifiable SQLite/WAL targets are skipped.
+- Temporary files are removed only when nothing inside an entry changed in
+  the last 2 days, and they are never part of Quick Clean or the weekly
+  schedule. This is an age heuristic, not an open-file check.
 - Apple-owned bundle identifiers are protected; shared data is retained while
   another application with the same bundle identifier remains installed.
 

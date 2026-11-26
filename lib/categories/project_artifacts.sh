@@ -81,6 +81,10 @@ _project_artifact_identity() {
 # by the CLI transport are skipped rather than ambiguously reinterpreted.
 _find_project_artifacts() {
   local root_rel root marker parent mbase type_info label artifact_name art_path s identity
+  # One directory can sit beside two manifests (build/ with build.gradle and
+  # CMakeLists.txt); report it once so it is neither double-counted nor
+  # bound to a marker the clean-time identity check will not pick.
+  local seen=$'\n'
   for root_rel in "${_PROJECT_SCAN_ROOTS[@]}"; do
     root="$HOME/$root_rel"
     [ -d "$root" ] || continue
@@ -95,7 +99,9 @@ _find_project_artifacts() {
       art_path="$parent/$artifact_name"
       [ -d "$art_path" ] || continue
       case "$art_path" in *','*|*$'\t'*|*$'\n'*) continue ;; esac
-      identity=$(_project_artifact_identity "$art_path" "$mbase") || continue
+      case "$seen" in *$'\n'"$art_path"$'\n'*) continue ;; esac
+      seen+="$art_path"$'\n'
+      identity=$(_project_artifact_identity "$art_path") || continue
       s=$(get_dir_size_bytes "$art_path") || s=0
       [ "$s" -ge "$_PROJECT_ARTIFACT_MIN_BYTES" ] 2>/dev/null || continue
       printf '%s\t%s\t%s\t%s\n' "$s" "$label" "$art_path" "$identity"

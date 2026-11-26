@@ -15,6 +15,7 @@ Security features:
 import hmac
 import http.server
 import json
+import math
 import os
 import platform
 import plistlib
@@ -33,6 +34,7 @@ import webbrowser
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import wraps
 from pathlib import Path
+from xml.parsers.expat import ExpatError
 
 from file_scanner import scan_files
 
@@ -136,17 +138,34 @@ def _terminate_process_group(process):
         pass
 
 
+# Children run in their own session, so terminal Ctrl+C never reaches them;
+# main() terminates whatever is still registered here on shutdown.
+_live_processes = set()
+_live_processes_lock = threading.Lock()
+
+
+def _terminate_live_processes():
+    with _live_processes_lock:
+        processes = list(_live_processes)
+    for process in processes:
+        _terminate_process_group(process)
+
+
 def _run_process(cmd, *, timeout, cwd=None, env=None, cancel_event=None):
     """Run argv in a process group; reap it on timeout or cancellation."""
     process = subprocess.Popen(
         cmd,
+        stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True,
+        encoding="utf-8",
+        errors="replace",
         cwd=cwd,
         env=env,
         start_new_session=True,
     )
+    with _live_processes_lock:
+        _live_processes.add(process)
     deadline = time.monotonic() + timeout
     try:
         while True:
@@ -163,6 +182,9 @@ def _run_process(cmd, *, timeout, cwd=None, env=None, cancel_event=None):
     except (subprocess.TimeoutExpired, ProcessCancelled):
         _terminate_process_group(process)
         raise
+    finally:
+        with _live_processes_lock:
+            _live_processes.discard(process)
     return subprocess.CompletedProcess(cmd, process.returncode, stdout, stderr)
 
 
@@ -194,9 +216,12 @@ def _load_history():
     for e in data:
         if isinstance(e, (list, tuple)) and len(e) == 2:
             try:
-                out.append((float(e[0]), int(e[1])))
+                ts, used = float(e[0]), float(e[1])
             except (ValueError, TypeError):
                 continue
+            # json.load accepts NaN/Infinity; they would poison the regression.
+            if math.isfinite(ts) and math.isfinite(used):
+                out.append((ts, int(used)))
     out.sort(key=lambda p: p[0])
     return out
 
@@ -843,6 +868,8 @@ def _build_health_report(*, home=None, script_path=None, system_name=None,
         try:
             with agent.open("rb") as handle:
                 payload = plistlib.load(handle)
+            if not isinstance(payload, dict):
+                raise ValueError("LaunchAgent plist is not a dictionary")
             args = payload.get("ProgramArguments", [])
             valid = (payload.get("Label") == LAUNCH_AGENT_LABEL
                      and isinstance(args, list) and "--clean-safe-json" in args)
@@ -850,7 +877,7 @@ def _build_health_report(*, home=None, script_path=None, system_name=None,
                 "The weekly LaunchAgent matches the safe-clean contract." if valid
                 else "The LaunchAgent does not match the expected safe-clean contract.",
                 "Disable and recreate the weekly schedule from the dashboard." if not valid else "")
-        except (OSError, ValueError, plistlib.InvalidFileException):
+        except (OSError, ValueError, ExpatError, plistlib.InvalidFileException):
             add("schedule", "Weekly schedule", "warning",
                 "The LaunchAgent configuration could not be parsed.",
                 "Disable and recreate the weekly schedule from the dashboard.")
@@ -912,11 +939,11 @@ def discover_applications():
                 ["du", "-sk", "--", *chunk], capture_output=True,
                 text=True, timeout=20,
             )
-            if res.returncode == 0:
-                for line in res.stdout.splitlines():
-                    parts = line.split("\t", 1)
-                    if len(parts) == 2 and parts[0].isdigit():
-                        app_sizes[parts[1]] = int(parts[0]) * 1024
+            # du exits 1 when any one path is unreadable; the other lines are valid.
+            for line in res.stdout.splitlines():
+                parts = line.split("\t", 1)
+                if len(parts) == 2 and parts[0].isdigit():
+                    app_sizes[parts[1]] = int(parts[0]) * 1024
         except (OSError, subprocess.SubprocessError):
             pass
 
@@ -962,12 +989,14 @@ def discover_applications():
         try:
             with open(os.path.join(app_path, "Contents", "Info.plist"), "rb") as handle:
                 plist = plistlib.load(handle)
+            if not isinstance(plist, dict):
+                raise ValueError("Info.plist is not a dictionary")
             bundle_id = str(plist.get("CFBundleIdentifier", ""))
             version = str(plist.get("CFBundleShortVersionString",
                                     plist.get("CFBundleVersion", "")))
             display_name = str(plist.get("CFBundleDisplayName", ""))
             bundle_name = str(plist.get("CFBundleName", ""))
-        except (OSError, ValueError, TypeError, plistlib.InvalidFileException):
+        except (OSError, ValueError, TypeError, ExpatError, plistlib.InvalidFileException):
             pass
 
         resolved_name = (display_name or bundle_name or folder_name).removesuffix(".app")
@@ -1005,9 +1034,10 @@ def discover_applications():
         size = 0
         version = ""
         try:
-            subdirs = [p for p in cpath.iterdir() if p.is_dir()]
+            subdirs = [p for p in cpath.iterdir()
+                       if p.is_dir() and not p.name.startswith(".")]
             if subdirs:
-                version = subdirs[0].name
+                version = max(subdirs, key=lambda p: p.stat().st_mtime).name
             res = subprocess.run(
                 ["du", "-sk", "--", str(cpath)], capture_output=True,
                 text=True, timeout=10,
@@ -1152,6 +1182,10 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             return None, "Invalid JSON body"
         except UnicodeDecodeError:
             return None, "Request body must be UTF-8 encoded"
+        except (ValueError, RecursionError):  # huge ints (3.11+), deep nesting
+            return None, "Invalid JSON body"
+        except OSError:  # client stalled past the socket timeout
+            return None, "Could not read request body"
 
         if not isinstance(payload, dict):
             return None, "JSON body must be an object"
@@ -1279,9 +1313,14 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         if not _file_scan_lock.acquire(blocking=False):
             return self._send_error_json("A file scan is already running; try again shortly", 409)
         try:
-            self._send_json(scan_files(kind))
+            result = scan_files(kind)
         except OSError:
             self._send_error_json("Could not read the user directory")
+        else:
+            try:
+                self._send_json(result)
+            except (BrokenPipeError, ConnectionResetError):
+                pass  # browser went away; nothing to report
         finally:
             _file_scan_lock.release()
 
@@ -1315,7 +1354,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
                 )
             finally:
                 _scan_running_event.clear()
-            if _scan_cancel_event.is_set():
+            # A cancel that lands after every category finished changes nothing.
+            if _scan_cancel_event.is_set() and "cancelled" in data["failed_categories"].values():
                 data["cancelled"] = True
                 # Cancellation is a user-selected terminal state, not a server
                 # failure. Completed category results remain safe to inspect.
@@ -1358,7 +1398,12 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
         self._send_json(data)
 
     def _handle_health(self):
-        self._send_json(_build_health_report())
+        try:
+            report = _build_health_report()
+        except Exception as e:  # never drop the connection without a reply
+            self._send_error_json(f"Health check failed: {e}")
+            return
+        self._send_json(report)
 
     def _handle_history(self):
         data, err = self._run_script(["--history-json"], timeout=15)
@@ -1748,6 +1793,8 @@ class CleanupHandler(http.server.BaseHTTPRequestHandler):
             self._security_headers()
             self.end_headers()
             self.wfile.write(data)
+        except (BrokenPipeError, ConnectionResetError):
+            pass  # browser went away mid-response
         except Exception as e:
             self._send_error_json(f"File read error: {e}")
 
@@ -1777,7 +1824,9 @@ def _bind_server():
     # ThreadingHTTPServer keeps the dashboard responsive while a long scan or
     # cleanup runs; a plain single-threaded HTTPServer freezes for the whole
     # operation and looks like the server has died.
-    http.server.ThreadingHTTPServer.allow_reuse_address = True
+    # No SO_REUSEADDR: on macOS it lets us bind 127.0.0.1:PORT beside another
+    # app's 0.0.0.0:PORT listener and silently steal its loopback traffic.
+    http.server.ThreadingHTTPServer.allow_reuse_address = False
     last_err = None
     for candidate in range(PORT, PORT + 10):
         try:
@@ -1800,10 +1849,18 @@ def main():
     print(f"   Press Ctrl+C to stop\n")
     # Open the browser shortly after the server starts accepting connections.
     threading.Timer(1.0, _open_browser).start()
+
+    def _sigterm(signum, frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, _sigterm)
+    signal.signal(signal.SIGHUP, _sigterm)  # Terminal window closed
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\n✋ Server stopped.")
+    finally:
+        # Do not leave a scan or cleanup running without a supervisor.
+        _terminate_live_processes()
         server.server_close()
 
 

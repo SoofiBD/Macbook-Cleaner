@@ -160,3 +160,23 @@ test('clean runs one request per category, trash first, and lists finished tasks
   assert.match(progress, /clean-task-done[\s\S]*Removed 10 B/);
   assert.equal(app.get('#cleanProgressCount').textContent, '2 of 2 done');
 });
+
+test('dry-run mode is frozen for the whole clean even if toggled mid-run', async () => {
+  const bodies = [];
+  const app = await dashboard({
+    '/api/scan': { success: true, scan: { logs: { size_bytes: 10 }, trash: { size_bytes: 20 } } },
+  });
+  await app.tab('smart-clean');
+  await app.get('#smartCleanCategoriesList').fire('click', { dataset: { catCheck: 'trash' }, checked: true });
+  const toggle = app.get('#dryRunToggleGlobal');
+  await toggle.fire('change', { checked: true });
+  app.setResponse('/api/clean', body => {
+    bodies.push(JSON.parse(body));
+    // User flips dry run off while the first category is still running.
+    if (bodies.length === 1) toggle.fire('change', { checked: false });
+    return { success: true, estimated_bytes: 1, estimated_human: '1 B', details: [{ status: 'ok' }] };
+  });
+  await app.get('#btnExecuteClean').fire('click');
+  await flush();
+  assert.deepEqual(bodies.map(b => b.dry_run), [true, true]);
+});

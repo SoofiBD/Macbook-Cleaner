@@ -128,7 +128,10 @@ _requires_live_guard() {
     "$HOME/Library/Application Support/Microsoft Edge"|\
     "$HOME/Library/Application Support/Microsoft Edge"/*|\
     "$HOME/Library/Application Support/Arc"|\
-    "$HOME/Library/Application Support/Arc"/*) return 0 ;;
+    "$HOME/Library/Application Support/Arc"/*|\
+    "$HOME/Library/Application Support/com.operasoftware.Opera"|\
+    "$HOME/Library/Application Support/com.operasoftware.Opera"/*|\
+    "$HOME/Library/Application Support/LM-Studio"/*) return 0 ;;
   esac
   return 1
 }
@@ -212,6 +215,7 @@ _path_owner_is_running() {
     *"/BraveSoftware"*) bundle_id="com.brave.Browser" ;;
     *"/Microsoft Edge"*) bundle_id="com.microsoft.edgemac" ;;
     *"/Arc"*) bundle_id="company.thebrowser.Browser" ;;
+    *"/LM-Studio"*) bundle_id="ai.elementlabs.lmstudio" ;;
     *)
       case "$owner" in
         com.*|org.*|net.*|io.*|dev.*) bundle_id="$owner" ;;

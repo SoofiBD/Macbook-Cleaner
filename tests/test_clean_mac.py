@@ -643,7 +643,18 @@ def test_safe_clean_ids_map_to_expected_numbers():
     nums = _source_eval('cat_nums_by_ids "${SAFE_CLEAN_IDS[@]}"').split()
     # trash (7) first: emptying Trash after the others would permanently
     # delete what they had just moved there.
-    assert nums == ["7", "1", "2", "4", "5", "8"], nums
+    # temp_files is excluded: live app state lives in the per-user temp dirs.
+    assert nums == ["7", "1", "2", "4", "8"], nums
+
+
+def test_quick_clean_reads_every_safe_category():
+    # cat_nums_by_ids prints one number per line; `read -ra` alone keeps only
+    # the first line, which once made Quick Clean empty the Trash and nothing else.
+    count = _source_eval(
+        'read -ra n <<< "$(cat_nums_by_ids "${SAFE_CLEAN_IDS[@]}" | tr \'\\n\' \' \')"; echo "${#n[@]}"')
+    assert count == "5", count
+    source = SCRIPT.read_text(encoding="utf-8")
+    assert '<<< "$(cat_nums_by_ids "${SAFE_CLEAN_IDS[@]}")"' not in source
 
 
 def test_category_registry_order_is_stable():
@@ -898,3 +909,83 @@ def test_open_file_snapshot_detects_files_held_open_under_home(tmp_path):
         holder.wait()
     assert "busy=0" in out.stdout, out.stdout + out.stderr
     assert "idle=1" in out.stdout, out.stdout + out.stderr
+
+
+def test_control_characters_in_names_keep_scan_json_valid(tmp_path):
+    support = tmp_path / "Library" / "Application Support"
+    bad = support / "Bad\x01Name\x0cDir"
+    bad.mkdir(parents=True)
+    (bad / "data").write_bytes(b"x" * 2_000_000)  # empty dirs are not listed
+    result, payload = run_category_scan(tmp_path, "app_leftovers")
+    assert result.returncode == 0, result.stderr
+    assert payload["success"] is True
+
+
+def test_broken_symlinks_are_found_with_bsd_find(tmp_path):
+    config = tmp_path / ".config"
+    config.mkdir()
+    (config / "dangling").symlink_to(tmp_path / "missing-target")
+    (config / "valid").symlink_to(config)
+    env = dict(os.environ, HOME=str(tmp_path))
+    out = subprocess.run(
+        ["bash", "-c", f'source "{SCRIPT}" >/dev/null 2>&1; _find_broken_symlinks | tr "\\0" "\\n"'],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert out.stdout.splitlines() == [str(config / "dangling")], out
+
+
+def test_artifact_beside_two_manifests_is_reported_once_and_cleanable(tmp_path):
+    project = tmp_path / "Projects" / "ndk-app"
+    build = project / "build"
+    build.mkdir(parents=True)
+    (project / "build.gradle").write_text("")
+    (project / "CMakeLists.txt").write_text("")
+    (build / "blob").write_bytes(b"x" * (11 * 1024 * 1024))
+
+    _, scan = run_category_scan(tmp_path, "project_artifacts")
+    items = scan["category"]["subitems"]
+    assert len(items) == 1, items
+    assert scan["category"]["size_bytes"] < 2 * 11 * 1024 * 1024
+
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_DRYRUN="1")
+    ok = subprocess.run([
+        "bash", str(SCRIPT), "--project-artifact-sub", items[0]["id"],
+        "--project-artifact-identities", items[0]["identity"],
+        "--clean-ids-json", "project_artifacts",
+    ], env=env, capture_output=True, text=True, timeout=60)
+    payload = json.loads(ok.stdout)
+    assert payload["success"] is True, payload
+    assert payload["estimated_bytes"] >= 11 * 1024 * 1024
+
+
+def test_exclusion_patterns_accept_tilde_trailing_slash_and_case(tmp_path):
+    for pat in ("~/Library/Caches/Keep/", "$HOME/library/caches/keep"):
+        env = dict(os.environ, HOME=str(tmp_path))
+        out = subprocess.run(
+            ["bash", "-c",
+             f'source "{SCRIPT}" >/dev/null 2>&1; EXCLUDE_RAW="{pat}"; '
+             '_is_excluded "$HOME/Library/Caches/Keep/x" && echo yes; '
+             '_is_excluded "$HOME/Library/Caches/Other" || echo no'],
+            env=env, capture_output=True, text=True, timeout=60,
+        )
+        assert out.stdout.split() == ["yes", "no"], (pat, out)
+
+
+def test_dot_is_rejected_as_leftover_name(tmp_path):
+    support = tmp_path / "Library" / "Application Support"
+    (support / "keep").mkdir(parents=True)
+    (support / "keep" / "data").write_bytes(b"x" * 2_000_000)
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_DRYRUN="1")
+    out = subprocess.run(
+        ["bash", str(SCRIPT), "--app-leftovers", ".", "--clean-ids-json", "app_leftovers"],
+        env=env, capture_output=True, text=True, timeout=60,
+    )
+    assert json.loads(out.stdout).get("estimated_bytes", 0) == 0, out.stdout
+
+
+def test_dry_run_skips_maintenance_tools(tmp_path):
+    env = dict(os.environ, HOME=str(tmp_path), APPLE_CLEANUP_DRYRUN="1")
+    for flag in ("--flush-dns", "--purge-ram"):
+        out = subprocess.run(["bash", str(SCRIPT), flag], env=env,
+                             capture_output=True, text=True, timeout=60)
+        assert json.loads(out.stdout).get("dry_run") is True, (flag, out.stdout)
