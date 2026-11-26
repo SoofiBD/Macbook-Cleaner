@@ -105,7 +105,7 @@ browser tab.
 
 ### Requirements
 
-- macOS 13 or later (CI runs on macOS 14 and 15).
+- macOS 13 or later (CI runs on macOS 15).
 - Python 3.9 or later for the dashboard. The stock `/usr/bin/python3` works.
   If it is missing, run `xcode-select --install`.
 - Full Disk Access for your terminal app if you want protected locations

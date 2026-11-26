@@ -38,9 +38,9 @@ jobs:
         include:
           # 3.9 = /usr/bin/python3 on stock macOS, which the double-click
           # launcher uses when no newer python3 is installed.
-          - os: macos-14
+          - os: macos-15
             python: "3.9"
-          - os: macos-14
+          - os: macos-15
             python: "3.10"
           - os: macos-15
             python: "3.14"
