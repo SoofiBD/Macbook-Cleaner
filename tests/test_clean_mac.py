@@ -86,9 +86,11 @@ def test_app_uninstaller_excluded_from_total(tmp_path):
     make_dir_with_bytes(tmp_path / "Library/Caches/com.example.app", kb=2048)
     data = run_scan(tmp_path)
     # app_uninstaller bytes'ı varsa bile total'a dahil olmamalı
+    # The total follows each category's in_total flag (quicklook and
+    # diagnostic_reports overlap other categories and are excluded too).
+    assert data["scan"]["app_uninstaller"]["in_total"] is False
     summed_in_total = sum(
-        info["size_bytes"] for cid, info in data["scan"].items()
-        if cid != "app_uninstaller"
+        info["size_bytes"] for info in data["scan"].values() if info["in_total"]
     )
     assert data["total_bytes"] == summed_in_total
 
