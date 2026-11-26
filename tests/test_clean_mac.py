@@ -15,7 +15,7 @@ def test_cli_reports_current_release_version():
         capture_output=True, text=True, timeout=10,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == "2.3.4"
+    assert result.stdout.strip() == "2.4.0"
 
 
 def run_scan(home: Path) -> dict:

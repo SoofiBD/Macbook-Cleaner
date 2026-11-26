@@ -21,7 +21,7 @@ class TestScriptPath(unittest.TestCase):
 
         source = SCRIPT_PATH.read_text(encoding="utf-8")
         self.assertIn(f'VERSION="{APP_VERSION}"', source)
-        self.assertEqual(APP_VERSION, "2.3.4")
+        self.assertEqual(APP_VERSION, "2.4.0")
 
     def test_dashboard_footer_uses_runtime_version_placeholder(self):
         from server import VERSION_PLACEHOLDER
