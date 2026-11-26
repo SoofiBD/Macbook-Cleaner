@@ -390,6 +390,8 @@
         const errJson = await res.json();
         if (errJson?.error) msg = errJson.error;
       } catch {}
+      // The token rotates on every server start; an old tab keeps the stale one.
+      if (res.status === 403 && /session token/i.test(msg)) msg += '. The server was restarted: reload this page.';
       throw new Error(msg);
     }
 
@@ -746,8 +748,8 @@
     const shown = state.cleanProgressTab === 'done' ? done : active;
 
     $('#cleanProgressTitle').textContent = finished
-      ? (state.dryRun ? 'Dry run finished' : 'Cleanup finished')
-      : (state.dryRun ? 'Simulating cleanup…' : 'Cleaning…');
+      ? (state.cleanDryRun ? 'Dry run finished' : 'Cleanup finished')
+      : (state.cleanDryRun ? 'Simulating cleanup…' : 'Cleaning…');
     $('#cleanProgressCount').textContent = `${done.length} of ${tasks.length} done`;
     $('#cleanProgressFill').style.width = `${tasks.length ? (done.length / tasks.length) * 100 : 0}%`;
     $('#cleanTabActiveCount').textContent = String(active.length);
@@ -759,7 +761,7 @@
     const label = t => ({
       pending: 'Queued',
       running: 'In progress',
-      done: `${state.dryRun ? 'Would remove' : 'Removed'} ${t.size}${t.note ? ` · ${t.note}` : ''}`,
+      done: `${state.cleanDryRun ? 'Would remove' : 'Removed'} ${t.size}${t.note ? ` · ${t.note}` : ''}`,
       skipped: t.note || 'Skipped',
       failed: t.note || 'Failed',
     })[t.status];
@@ -784,10 +786,8 @@
 
   async function cleanOneCategory(task) {
     try {
-      const payload = {
-        ...ScanUtil.buildSelectedCleanPayload(state.scanData, [task.key], state.selectedSubitems),
-        dry_run: state.dryRun
-      };
+      const payload = task.payload;
+      if (!payload) throw new Error(task.payloadError || 'Nothing selected in this category.');
       const res = await apiFetch('/api/clean', { method: 'POST', body: JSON.stringify(payload) });
       // estimated_bytes is what was removed or moved to Trash; the df-based
       // freed_bytes stays 0 for Trash moves, which free nothing until emptied.
@@ -809,25 +809,47 @@
   }
 
   async function performClean() {
-    const btn = $('#btnExecuteClean');
-    if (btn) { btn.disabled = true; btn.textContent = state.dryRun ? 'Simulating...' : 'Cleaning...'; }
-    // A scan finishing mid-clean would cache and display pre-clean results.
-    const scanButtons = [$('#btnQuickScan'), $('#btnSmartRescan')].filter(Boolean);
-    scanButtons.forEach(b => { b.disabled = true; });
-
+    if (state.cleanInFlight) return;
+    if (state.scanInFlight) {
+      showToast({ type: 'warning', tag: 'Scan Running', title: 'Please Wait',
+        message: 'A scan is still running. Clean again when it finishes.' });
+      return;
+    }
     const categories = Array.from(state.selectedCategories).filter(k => state.scanData?.scan?.[k]);
-    categories.sort((a, b) => TRASH_CATEGORIES.includes(b) - TRASH_CATEGORIES.includes(a));
-    termLog(`Initiating ${state.dryRun ? 'DRY-RUN simulation' : 'cleaning'} for ${categories.length} categories...`, 'warning');
-
+    if (!categories.length) {
+      showToast({ type: 'warning', tag: 'Nothing To Clean', title: 'No Scanned Categories Selected',
+        message: 'Run a scan and select at least one available category.' });
+      return;
+    }
     if (!state.backendOnline) {
       showToast({ type: 'error', tag: 'Clean Error', title: 'Cleanup Failed',
         message: 'Backend unavailable. No cleanup was performed.', duration: 6500 });
-      scanButtons.forEach(b => { b.disabled = false; });
-      if (btn) { btn.disabled = false; btn.textContent = 'Clean Selected Space'; }
       return;
     }
+    categories.sort((a, b) => TRASH_CATEGORIES.includes(b) - TRASH_CATEGORIES.includes(a));
 
-    state.cleanTasks = categories.map(key => ({ key, name: CAT_BY_KEY[key]?.name || key, status: 'pending', size: '', note: '' }));
+    // Freeze dry-run mode and every payload now: toggles, checkbox clicks or a
+    // rescan during the run must not change what later categories send.
+    const dryRun = state.dryRun;
+    state.cleanDryRun = dryRun;
+    state.cleanInFlight = true;
+    state.cleanTasks = categories.map(key => {
+      const task = { key, name: CAT_BY_KEY[key]?.name || key, status: 'pending', size: '', note: '' };
+      try {
+        task.payload = { ...ScanUtil.buildSelectedCleanPayload(state.scanData, [key], state.selectedSubitems), dry_run: dryRun };
+      } catch (err) {
+        task.payloadError = err.message;
+      }
+      return task;
+    });
+
+    const btn = $('#btnExecuteClean');
+    if (btn) { btn.disabled = true; btn.textContent = dryRun ? 'Simulating...' : 'Cleaning...'; }
+    // A scan finishing mid-clean would cache and display pre-clean results.
+    const lockedControls = [$('#btnQuickScan'), $('#btnSmartRescan'), $('#dryRunToggleGlobal')].filter(Boolean);
+    lockedControls.forEach(b => { b.disabled = true; });
+    termLog(`Initiating ${dryRun ? 'DRY-RUN simulation' : 'cleaning'} for ${categories.length} categories...`, 'warning');
+
     state.cleanProgressTab = 'active';
     const panel = $('#cleanProgress');
     if (panel) panel.hidden = false;
@@ -842,9 +864,10 @@
         renderCleanProgress();
       }
     } finally {
+      state.cleanInFlight = false;
       state.cleanProgressTab = 'done';
       renderCleanProgress(true);
-      scanButtons.forEach(b => { b.disabled = false; });
+      lockedControls.forEach(b => { b.disabled = false; });
       if (btn) { btn.disabled = false; btn.textContent = 'Clean Selected Space'; }
     }
 
@@ -852,11 +875,11 @@
     const total = formatBytes(state.cleanTasks.reduce((sum, t) => sum + (t.bytes || 0), 0));
     showToast({
       type: failed.length ? 'error' : 'success',
-      tag: state.dryRun ? 'Dry Run' : 'Clean Complete',
-      title: failed.length ? 'Cleanup Partially Failed' : (state.dryRun ? 'Dry Run Simulation Finished' : 'Cleanup Complete'),
+      tag: dryRun ? 'Dry Run' : 'Clean Complete',
+      title: failed.length ? 'Cleanup Partially Failed' : (dryRun ? 'Dry Run Simulation Finished' : 'Cleanup Complete'),
       message: failed.length
         ? `${failed.length} of ${state.cleanTasks.length} categories failed: ${failed.map(t => `${t.name}: ${t.note}`).join('; ')}. Removed: ${total}.`
-        : (state.dryRun ? `Simulation finished. Would remove approximately ${total}.` : `Removed ${total}.`),
+        : (dryRun ? `Simulation finished. Would remove approximately ${total}.` : `Removed ${total}.`),
       duration: failed.length ? 6500 : 5500
     });
     // Refresh in the background; the results above are already final.
@@ -872,6 +895,11 @@
     if (btn) {
       btn.disabled = true;
       btn.innerHTML = `<svg style="animation:spin 1s linear infinite;"><use href="#ic-refresh"/></svg> Running...`;
+    }
+    if (state.dryRun) {
+      showToast({ type: 'warning', tag: 'Dry Run', title: toolName,
+        message: 'Dry run mode is on. Maintenance tools cannot be simulated; turn dry run off to run them.' });
+      return;
     }
     termLog(`Starting maintenance tool: ${toolName}...`, 'info');
 
@@ -1031,6 +1059,11 @@
     if (!btn) return;
     const appName = btn.dataset.uninstallApp;
     const targetId = btn.dataset.targetId;
+    if (state.dryRun) {
+      showToast({ type: 'warning', tag: 'Dry Run', title: 'Uninstall Not Simulated',
+        message: 'Dry run mode is on. Uninstall cannot be simulated; turn dry run off to remove apps.' });
+      return;
+    }
 
     showSafetyModal(
       `Uninstall Application: ${appName}`,
@@ -1145,6 +1178,8 @@
      Safety Confirmation Modal
      ══════════════════════════════════════════════════════════ */
   let modalConfirmCallback = null;
+  let modalReturnFocus = null;
+  let modalOpen = false;
 
   function showSafetyModal(title, message, onConfirm) {
     const modal = $('#safetyConfirmModal');
@@ -1153,27 +1188,54 @@
     $('#modalTitle').textContent = title;
     $('#modalBody').textContent = message;
     modalConfirmCallback = onConfirm;
+    modalReturnFocus = document.activeElement;
 
     modal.classList.add('open');
+    modalOpen = true;
+    $('#modalBtnCancel')?.focus?.();
   }
 
   function hideSafetyModal() {
-    $('#safetyConfirmModal')?.classList.remove('open');
+    const modal = $('#safetyConfirmModal');
+    if (!modalOpen) return;
+    modalOpen = false;
+    modal?.classList.remove('open');
     modalConfirmCallback = null;
+    modalReturnFocus?.focus?.();
+    modalReturnFocus = null;
   }
 
   $('#modalBtnCancel')?.addEventListener('click', hideSafetyModal);
   $('#modalBtnConfirm')?.addEventListener('click', () => {
-    if (typeof modalConfirmCallback === 'function') {
-      modalConfirmCallback();
-    }
+    const cb = modalConfirmCallback;
     hideSafetyModal();
+    if (typeof cb === 'function') {
+      Promise.resolve().then(cb).catch(err => {
+        termLog(`Action failed: ${err.message}`, 'error');
+        showToast({ type: 'error', tag: 'Error', title: 'Action Failed', message: err.message });
+      });
+    }
+  });
+  document.addEventListener('keydown', (e) => {
+    if (!modalOpen) return;
+    if (e.key === 'Escape') { e.preventDefault(); hideSafetyModal(); return; }
+    if (e.key === 'Tab') {
+      // Keep keyboard focus inside the confirmation dialog.
+      const items = [$('#modalBtnCancel'), $('#modalBtnConfirm')].filter(Boolean);
+      const i = items.indexOf(document.activeElement);
+      e.preventDefault();
+      items[(i + (e.shiftKey ? items.length - 1 : 1)) % items.length]?.focus?.();
+    }
   });
 
   /* ══════════════════════════════════════════════════════════
      Trigger Scan & Init
      ══════════════════════════════════════════════════════════ */
   async function triggerScan() {
+    if (state.scanInFlight) return;
+    state.scanInFlight = true;
+    const cleanBtn = $('#btnExecuteClean');
+    if (cleanBtn && !state.cleanInFlight) cleanBtn.disabled = true;
     termLog('Scanning macOS system caches and storage...', 'info');
     try {
       if (state.backendOnline) {
@@ -1198,6 +1260,9 @@
       renderDashboardCleanableTiles();
       if (state.activeTab === 'smart-clean') renderSmartCleanView();
       termLog(`Scan error: ${err.message}`, 'error');
+    } finally {
+      state.scanInFlight = false;
+      if (cleanBtn && !state.cleanInFlight) cleanBtn.disabled = false;
     }
   }
 
@@ -1213,8 +1278,14 @@
       await apiFetch('/api/health');
       state.backendOnline = true;
       termLog('Backend connection established (Online).', 'success');
+    } catch (e) {
+      state.backendOnline = false;
+      termLog('Backend unavailable. Start the local server and reload to reconnect.', 'error');
+      renderEmptyStorageRing();
+    }
 
-      // Fetch live status from backend
+    // A slow or failing status probe must not mark a healthy backend offline.
+    if (state.backendOnline) try {
       const status = await apiFetch('/api/status');
       if (status) {
         if (status.macos_version) $('#headMacVer').textContent = status.macos_version;
@@ -1229,8 +1300,7 @@
         }
       }
     } catch (e) {
-      state.backendOnline = false;
-      termLog('Backend unavailable. Start the local server and reload to reconnect.', 'error');
+      termLog(`System status unavailable: ${e.message}`, 'warning');
       renderEmptyStorageRing();
     }
 

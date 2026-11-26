@@ -1,7 +1,7 @@
 # Release checklist
 
 1. Run the complete local suite documented in `CONTRIBUTING.md` and require the
-   macOS 14 / Python 3.10 and macOS 15 / Python 3.14 CI matrix to pass.
+   macOS 15 / Python 3.9, 3.10 and 3.14 CI matrix to pass.
 2. Update the canonical `VERSION` in `clean_mac.sh`. The dashboard reads this
    value at startup, so the CLI, server banner, status API, and footer stay in
    sync. Commit the release candidate and require CI to pass.

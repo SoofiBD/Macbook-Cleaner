@@ -1,272 +1,240 @@
-# 🍎 Clean Mac
+# Clean Mac (apple-cleanup)
 
-> A comprehensive macOS system cleanup tool — simple, safe, and effective.
+> A free, auditable macOS cleaner that shows you exactly what it will remove,
+> moves your files to the Trash instead of deleting them, and runs entirely on
+> what already ships with your Mac.
 
-[![ShellCheck](https://img.shields.io/badge/ShellCheck-passing-brightgreen)](https://www.shellcheck.net/)
-[![macOS](https://img.shields.io/badge/macOS-Ventura%20%7C%20Sonoma%20%7C%20Sequoia-blue)](https://www.apple.com/macos/)
+[![CI](https://github.com/SoofiBD/Macbook-Cleaner/actions/workflows/ci.yml/badge.svg)](https://github.com/SoofiBD/Macbook-Cleaner/actions/workflows/ci.yml)
+[![macOS](https://img.shields.io/badge/macOS-13%2B-blue)](#requirements)
 [![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
 
-Clean Mac safely removes unnecessary data on macOS such as caches, logs, temporary files, leftover application data, and Trash contents. It can be used from an interactive terminal interface or a lightweight web dashboard.
-
-> **Lightweight & no-compiler philosophy:** This tool is deliberately
-> minimalist. There is **no** build step, no `npm install`, no compiler, and no
-> external dependency. A single-file server runs on the built-in Python, with
-> vanilla JavaScript and CSS animations — **no CDN or network required**.
+Clean Mac frees disk space taken by caches, logs, developer build output,
+leftover app data, old installers and stale project folders. You can use it
+from a local web dashboard or from the terminal. Every run scans first, shows
+sizes per item, and asks before it changes anything.
 
 ---
 
-## 🍺 Homebrew
+## Why use it
 
-Install the Formula from this repository, then run either interface:
+Most Mac cleaners ask you to trust a closed binary with permission to delete
+files. Clean Mac takes the opposite approach.
+
+- **You can read every line that deletes.** The cleanup engine is plain Bash
+  (about 4,000 lines), and all file removal goes through three functions in
+  [`lib/core/executor.sh`](lib/core/executor.sh). CI fails if any other code
+  path runs a recursive `rm`.
+- **Trash first, not delete first.** User data is moved to the Trash and logged,
+  so you can restore it from the dashboard's history. Only categories that are
+  permanent by nature (emptying the Trash, system caches, temp files) delete
+  directly, and they are labelled as such.
+- **Preview everything.** Dry-run mode (`APPLE_CLEANUP_DRYRUN=1` or the
+  dashboard switch) reports what would be removed and changes nothing.
+- **Nothing to install, nothing phones home.** No compiler, no `npm install`,
+  no `pip install`, no CDN, no telemetry, no account. The dashboard is a
+  standard-library Python server bound to `127.0.0.1` only.
+- **Built for developers too.** It understands 40+ developer caches (Xcode
+  DerivedData per project, simulators, Homebrew, npm/pnpm/yarn/bun, pip/uv,
+  Cargo, Gradle, CocoaPods, Flutter, JetBrains, Playwright, Hugging Face and
+  more) and finds stale `node_modules`, `target`, `build`, `.build`, `vendor`,
+  `.dart_tool` and `.terraform` folders next to real project manifests.
+- **Fails closed.** Unknown paths, symlink escapes, changed files, running
+  browsers and open databases are skipped, not guessed at.
+
+### How it compares
+
+| | Clean Mac | CleanMyMac | Mole | Pearcleaner / AppCleaner | OnyX |
+|---|---|---|---|---|---|
+| Price | Free, MIT | Paid subscription | Free | Free | Free |
+| Source you can audit | Yes (Bash + Python) | No | Yes | Pearcleaner yes, AppCleaner no | No |
+| Install needed | None (or Homebrew) | App | Homebrew | App | App |
+| Web dashboard + terminal | Both | GUI | Terminal | GUI | GUI |
+| Moves to Trash with restore history | Yes | Partly | Partly | Yes | No |
+| Dry-run preview | Yes | No | Yes | No | No |
+| Developer caches and project folders | Yes | Partly | Yes | No | No |
+| App uninstaller with leftovers | Yes | Yes | Yes | Yes (core feature) | No |
+| Disk-full forecast | Yes | No | No | No | No |
+
+Pick a dedicated tool if you only need one job done very well (for example
+Pearcleaner for uninstalling apps). Pick Clean Mac if you want one free,
+transparent tool that covers caches, developer junk, apps and old installers,
+and that you can review before you let it touch your disk.
+
+---
+
+## Quick start
+
+### Option 1: Double-click (no Terminal needed)
+
+1. Click the green **Code** button on this page, then **Download ZIP**.
+2. Double-click the ZIP to extract it.
+3. Right-click **`CLICK_TO_START.command`**, choose **Open**, then click
+   **Open** again.
+
+The dashboard opens in your browser at `http://127.0.0.1:8080`. To stop it,
+close the Terminal window that opened.
+
+Right-click → Open is only needed the first time, because macOS blocks files
+downloaded from the internet. The launcher removes that block from itself and
+its helper script only, never from the whole folder.
+
+### Option 2: Homebrew
 
 ```bash
 brew tap SoofiBD/apple-cleanup https://github.com/SoofiBD/Macbook-Cleaner
 brew trust SoofiBD/apple-cleanup
 brew install apple-cleanup
-apple-cleanup          # web dashboard
-apple-cleanup-cli      # terminal interface
 ```
 
-Update through the same trusted tap:
+Then run `apple-cleanup` (dashboard) or `apple-cleanup-cli` (terminal).
+Homebrew installs the latest tagged release, which can be older than `main`.
+The `brew trust` step is needed because the tap lives in this repository
+instead of a `homebrew-*` repository.
+
+### Option 3: From source
 
 ```bash
-brew update
-brew upgrade apple-cleanup
-apple-cleanup-cli --version
+git clone https://github.com/SoofiBD/Macbook-Cleaner.git
+cd Macbook-Cleaner
+python3 web/server.py        # dashboard
+bash clean_mac.sh            # terminal interface
 ```
 
-The explicit `brew trust` step is required because this tap uses the existing
-`Macbook-Cleaner` repository instead of Homebrew's conventional
-`homebrew-apple-cleanup` repository name.
+Set `APPLE_CLEANUP_OPEN_BROWSER=0` to stop the dashboard from opening a
+browser tab.
 
-Homebrew removes the ZIP, permission-fixing, and project-directory steps. It
-cannot grant macOS privacy permissions: for protected locations, give your
-terminal app Full Disk Access under **System Settings → Privacy & Security →
-Full Disk Access**.
+### Requirements
 
-`brew uninstall apple-cleanup` removes the installed application files but
-keeps runtime history and logs in `~/.cache/apple-cleanup`. If weekly cleanup
-was enabled, its plist in `~/Library/LaunchAgents/` is also kept.
-
-To remove those user-owned files safely, run this before uninstalling:
-
-```bash
-apple-cleanup-cli --remove-user-data
-brew uninstall apple-cleanup
-```
+- macOS 13 or later (CI runs on macOS 15).
+- Python 3.9 or later for the dashboard. The stock `/usr/bin/python3` works.
+  If it is missing, run `xcode-select --install`.
+- Full Disk Access for your terminal app if you want protected locations
+  scanned: **System Settings → Privacy & Security → Full Disk Access**.
 
 ---
 
-## 🖱️ Easy Setup & Usage (No technical knowledge needed)
+## What it cleans
 
-You don't need to know the Terminal. Three steps:
+| Category | What | How it is removed |
+|---|---|---|
+| User caches | `~/Library/Caches/*` | Trash; skipped while the owning app runs |
+| System caches | `/Library/Caches/*` | Permanent; terminal mode with `sudo` only |
+| App leftovers | Folders in `~/Library/Application Support` | Trash; you pick each one |
+| Logs | `~/Library/Logs`, `/Library/Logs` | Trash |
+| Temporary files | Per-user temp and cache folders | Permanent; only entries idle for 2+ days; opt-in |
+| Developer | Xcode, simulators, package-manager and IDE caches | Per item; you pick each one |
+| Trash | `~/.Trash` | Permanent; opt-in |
+| Browser cache | Safari, Chrome, Firefox, Brave, Edge, Arc, Opera caches | Trash |
+| Browser full data | Whole profiles (cookies, history) | Trash; danger level, extra confirmation; skipped while the browser runs |
+| iOS backups | `~/Library/MobileSync/Backup` | You pick each backup |
+| App uninstaller | App bundle plus its exact bundle-ID leftovers | Trash; Homebrew casks use `brew uninstall --zap` |
+| Mail downloads | Mail attachment cache | Trash; opt-in |
+| Diagnostic reports | `~/Library/Logs/DiagnosticReports` | Trash |
+| QuickLook cache | Thumbnail cache | Permanent |
+| Saved app state | `~/Library/Saved Application State` | Trash |
+| Other volumes' Trash | `/Volumes/*/.Trashes` | Permanent; opt-in |
+| Project artifacts | Stale build/dependency folders next to a manifest | Trash; bound to the scanned folder identity |
+| Installer files | Large `.dmg`, `.pkg`, `.iso` at the top of `~/Downloads` | Trash; never pre-selected |
 
-1. **Download:** Click the green **`Code`** button at the top of this page →
-   **`Download ZIP`**.
-2. **Extract:** Double-click the downloaded ZIP; a folder is created.
-3. **Start:** Inside the folder, **right-click `CLICK_TO_START.command` → "Open"**,
-   then click **"Open"** again in the warning dialog.
+The dashboard also has read-only **Large Files** and **Duplicate Files**
+views (SHA-256 verified, hard links counted once), a **Health** check, a
+**Storage forecast** based on your disk-usage trend, and an optional weekly
+schedule that runs only the safe categories.
 
-The dashboard opens automatically in your browser at `http://localhost:8080`. 🎉
-
-> **Why "right-click → Open" the first time?** macOS locks files downloaded from
-> the internet for security. Right-click → "Open" approves the launcher once.
-> After the first launch, a **plain double-click** is enough. The launcher only
-> clears quarantine from itself and the internal launcher; it never changes the
-> quarantine state of the whole project directory.
->
-> To quit, just close the black Terminal window that opened.
-
-> **Note:** The dashboard requires Python 3. Install it through Homebrew or the
-> Command Line Tools if `python3` is not already available.
-
----
-
-## ✨ Features
-
-- 🔍 Scans first and asks for confirmation — no surprises
-- 📊 Flexible cleanup across **18 categories**
-- 🧑‍💻 Deep **developer cleanup** — 40+ caches: Xcode/simulators, Homebrew, npm/pnpm/yarn/bun/deno, pip/uv/poetry/conda, Go, Rust Cargo, Gradle/Maven/SBT/Bazel, CocoaPods/Carthage, Composer, Flutter, JetBrains, Playwright/Puppeteer/Prisma, HuggingFace, and more — each with a plain-language description of what it is and how it rebuilds, plus a per-project breakdown of Xcode DerivedData (e.g. *MyApp: 2.3 GB, ClientSDK: 1.1 GB*)
-- 🗑️ **App Uninstaller** — remove apps and their leftovers, with Homebrew-cask awareness, from the dashboard
-- 🧱 **Project Artifact Scanner** — finds stale `node_modules`/`target`/`.build`/`build`/`vendor`/`.dart_tool`/`.terraform` next to a project manifest in your code folders; stale (>30 days) ones are pre-selected
-- 📦 **Installer File Review** — lists large top-level DMG/PKG/ISO files in
-  `~/Downloads`; none are pre-selected and only identity-bound individual files can be moved to Trash
-- 📈 **Storage forecast** — records disk-usage history and predicts when your disk will fill (least-squares trend over the last 90 days)
-- 🩺 **Read-only Health view** — checks macOS compatibility, disk pressure,
-  private state permissions, Trash redirection, system tools and the weekly schedule without changing anything
-- ⏱️ Bounded, cancellable category scans preserve successful partial results
-- 🌐 Lightweight web dashboard (start with a single command), with CSS animations and reduced-motion support
-- 🛡️ Avoids touching critical system files by default
-- 🍎 Compatible with Bash 3.2; macOS 13+ is the supported baseline (CI covers macOS 14 and 15)
+**Quick Clean** (and the weekly schedule) runs only: Trash, user caches,
+system caches (terminal with `sudo` only), logs and browser caches.
 
 ---
 
-## 🧑‍💻 Advanced / Terminal Usage
+## Safety model
 
-For those who prefer the Terminal. (The double-click method above does all of
-this in the background.)
+- **Scan, then confirm.** Nothing is removed without a scan and your
+  confirmation. Danger-level categories need a second confirmation.
+- **One deletion boundary.** All removals go through `safe_rm`,
+  `safe_rm_contents` or `run_mutating_action`. Each target is checked again
+  right before removal: absolute path, no `..`, inside an allowed scope, real
+  (physical) parent still inside that scope.
+- **Identity binding.** Project artifacts and installer files are tied to the
+  device/inode (and size/mtime for installers) seen during the scan. If the
+  file changed since, it is skipped.
+- **Live-data guards.** Browser profiles, caches of running apps and open
+  SQLite/WAL databases are skipped.
+- **Your exclusions win.** Set `APPLE_CLEANUP_EXCLUDE` to a colon-separated
+  list of paths or globs. `~`, trailing slashes and different letter case are
+  handled:
 
-### Installation
+  ```bash
+  APPLE_CLEANUP_EXCLUDE="~/Library/Caches/com.myapp:*/Important*" bash clean_mac.sh
+  ```
+
+- **Locked-down dashboard.** Loopback only, `Host`/`Origin` checks against DNS
+  rebinding, a new session token on each start for every write request, one
+  destructive operation at a time, and child processes stopped when the server
+  stops.
+
+The full contract is in [SECURITY.md](SECURITY.md) and
+[docs/SECURITY_DESIGN.md](docs/SECURITY_DESIGN.md).
+
+---
+
+## Terminal and JSON interface
 
 ```bash
-git clone https://github.com/<username>/apple-cleanup.git
-cd apple-cleanup
-chmod +x clean_mac.sh
-```
-
-### Interactive (terminal interface)
-
-```bash
-# Scans first, then prompts for confirmation
-bash clean_mac.sh
-
-# Help
 bash clean_mac.sh --help
-```
-
-### Web Dashboard
-
-```bash
-python3 web/server.py
-# The browser opens automatically: http://localhost:8080
-```
-
-To prevent the browser from opening automatically:
-
-```bash
-APPLE_CLEANUP_OPEN_BROWSER=0 python3 web/server.py
-```
-
----
-
-## 📦 Cleanup Categories
-
-The script targets a wide array of system and user items, categorized by safety levels:
-
-| # | Category | Target / Description | Notes |
-|---|----------|----------------------|-------|
-| 1 | 📦 User Caches | `~/Library/Caches/*` | Safe |
-| 2 | 🖥️ System Caches | `/Library/Caches/*` | requires `sudo` |
-| 3 | 📂 App Leftovers | `~/Library/Application Support/` | interactive selection |
-| 4 | 📋 Logs | `~/Library/Logs/*`, `/Library/Logs/*` | Safe |
-| 5 | 🗃️ Temporary Files | `$TMPDIR`, user var/folders | permanent; opt-in in dashboard |
-| 6 | 🛠️ Developer | Xcode and tool caches/actions | mixed recovery; explicit sub-item selection |
-| 7 | 🗑️ Trash | `~/.Trash/*` | permanent; opt-in |
-| 8 | 🌐 Browser Cache | `~/Library/Caches` for Safari, Chrome, etc. | Safe |
-| 9 | ⚠️ Browser Full Data | Complete browser profiles (cookies, history) | **Danger** (requires opt-in) |
-| 10| 📱 iOS Backups | `~/Library/MobileSync/Backup` | interactive selection |
-| 11| 🗑️ App Uninstaller | Remove apps & associated leftover files | interactive selection |
-| 12| 📨 Mail Downloads | Mail attachment downloads cache | Trash-first; opt-in |
-| 13| 🩺 Diagnostic Reports| `~/Library/Logs/DiagnosticReports` | Safe |
-| 14| 🖼️ QuickLook Cache | `qlmanage` thumbnail cache | Safe |
-| 15| 💾 Saved App State | `~/Library/Saved Application State` | Caution |
-| 16| 💽 Other Trashes | `/Volumes/*/.Trashes` | permanent; opt-in |
-| 17| 🧱 Project Artifacts | Stale `node_modules`, `target`, `.build`, `build`, `vendor`, `.dart_tool`, `.terraform` in code folders | interactive selection |
-| 18| 📦 Installer Files | Large top-level `.dmg`, `.pkg`, `.iso` files in `~/Downloads` | never pre-selected; identity-bound Trash move |
-
----
-
-## 🏗️ Project Structure
-
-```
-apple-cleanup/
-├── Formula/
-│   └── apple-cleanup.rb      # Homebrew Formula
-├── CLICK_TO_START.command    # Double-click launcher (fixes perms/quarantine)
-├── Internal_Launcher.command # Background: runs the server
-├── clean_mac.sh              # Main cleanup script
-├── lib/core/                 # Trash-first executor and fail-closed path policy
-├── lib/categories/           # Project, app-uninstaller and installer modules
-├── SECURITY.md               # Public deletion-safety contract
-├── THIRD_PARTY_NOTICES.md    # Third-party reference notices
-├── docs/                     # Architecture and security design
-├── tests/                    # Python and Node regression/security tests
-├── web/
-│   ├── server.py             # Python web server for the dashboard
-│   ├── index.html            # Dashboard UI
-│   ├── style.css             # Styles
-│   ├── script.js             # Frontend logic
-│   └── scanutil.js           # Scan result helpers
-├── README.md
-├── LICENSE
-└── .gitignore
-```
-
----
-
-## 🔧 Web API
-
-The web dashboard invokes `clean_mac.sh` in JSON mode for programmatic control:
-
-```bash
-# Get scan results
-bash clean_mac.sh --scan-json
-
-# Clean stable category IDs (preferred)
-bash clean_mac.sh --clean-ids-json user_cache,logs
-
-# Legacy numeric form remains supported for CLI compatibility
-bash clean_mac.sh --clean-json 1,4
-
-# Get system status
+bash clean_mac.sh --scan-json                         # full scan as JSON
+bash clean_mac.sh --scan-category-json developer      # one category
+bash clean_mac.sh --clean-ids-json user_cache,logs    # clean by stable id
+APPLE_CLEANUP_DRYRUN=1 bash clean_mac.sh --clean-ids-json user_cache
 bash clean_mac.sh --status-json
+bash clean_mac.sh --remove-user-data                  # remove history/logs/schedule
 ```
 
-The dashboard also exposes two HTTP endpoints used by the **App Uninstaller**
-tab (loopback + session-token protected, like every other write endpoint):
-
-- `GET /api/apps` — enumerate installed apps (`/Applications`, `~/Applications`)
-  and Homebrew casks, with sizes and bundle IDs.
-- `POST /api/uninstall` — remove an app and its leftovers and/or run
-  `brew uninstall`. App and Homebrew names are validated before use.
-- `GET /api/forecast` — records a disk-usage snapshot (max once/hour, 90-day
-  retention in `~/.cache/apple-cleanup/`) and returns a least-squares estimate
-  of days until the disk is full, plus the daily growth rate.
+Category ids are stable; display order is not part of the API.
 
 ---
 
-## ⚠️ Safety Notes
+## Project layout
 
-- The dashboard preselects only conservative cache/log categories. Permanent,
-  developer, mail, Trash and external-volume actions require explicit opt-in.
-- The app uninstaller moves app bundles and exact associated files to Trash:
-  bundle-ID based support/cache/container/script/web data, preferences,
-  launch agents, saved state and matching user crash reports. Homebrew casks
-  use `brew uninstall --cask --zap` first.
-- macOS will recreate many of these files as needed.
-- The `Downloads` folder is not touched.
-- System Cache cleanup requires `sudo` (terminal mode).
-- The web dashboard skips categories that require `sudo`; run terminal mode for
-  an explicitly authorized system-cache cleanup.
-- **Dry-run preview:** set `APPLE_CLEANUP_DRYRUN=1` (or enable *Preview* in the
-  dashboard) to see exactly what would be removed — nothing is deleted.
-- **Exclusion list:** set `APPLE_CLEANUP_EXCLUDE` to a colon-separated list of
-  paths/globs to protect from deletion, e.g.
-  `APPLE_CLEANUP_EXCLUDE="$HOME/Library/Caches/com.myapp:*/Important*"`.
+```
+clean_mac.sh               Cleanup engine and CLI (category registry, orchestration)
+lib/core/executor.sh       The only code that moves or deletes files
+lib/core/path_policy.sh    Scope checks, symlink confinement, live-app guards
+lib/categories/            Project artifacts, app uninstaller, installer files
+web/server.py              Loopback dashboard server (standard library only)
+web/file_scanner.py        Read-only large/duplicate file inventory
+web/index.html, script.js  Dashboard UI (vanilla JS, no build step)
+Formula/apple-cleanup.rb   Homebrew formula
+tests/                     Python and Node regression and security tests
+```
 
-## 🔒 Web Dashboard Security
-
-The dashboard exposes an API that can delete files, so it is locked down:
-
-- Binds to **loopback only** (`127.0.0.1`) — never reachable from the LAN.
-- Rejects requests whose `Host`/`Origin` is not loopback (anti DNS-rebinding/CSRF).
-- Requires a **per-session token** (regenerated on each start) on every
-  destructive request; no wildcard CORS is sent.
-- Re-discovers an uninstall target immediately before removal and rejects
-  changed, symlinked, out-of-scope, or protected app bundles.
-- Serializes destructive operations so cleanup, restore, and uninstall cannot
-  race one another.
-- Uses stable category IDs, versioned scan plans, scan-time artifact identities,
-  physical-parent validation and live database guards.
-- Runs scans through four bounded category workers; timed-out categories become
-  explicit partial results and the dashboard can cancel active process groups.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for details.
 
 ---
 
-## 📄 License
+## Contributing
 
-Project-authored code is MIT-licensed. Mole was used only as an architectural
-reference and no GPLv3 source or branding is incorporated; see
+Bug reports and focused pull requests are welcome. Please read
+[CONTRIBUTING.md](CONTRIBUTING.md) first: the no-dependency rule and the single
+deletion boundary are not negotiable. Run the checks before opening a PR:
+
+```bash
+shellcheck --shell=bash clean_mac.sh lib/core/*.sh lib/categories/*.sh
+python3 -m pytest
+node --test tests/*.mjs
+```
+
+## Uninstalling
+
+```bash
+apple-cleanup-cli --remove-user-data   # or: bash clean_mac.sh --remove-user-data
+brew uninstall apple-cleanup           # if installed with Homebrew
+```
+
+`--remove-user-data` moves the history, logs (`~/.cache/apple-cleanup`) and
+the weekly LaunchAgent to the Trash.
+
+## License
+
+MIT. See [LICENSE](LICENSE). Mole was used only as an architectural reference;
+no GPLv3 code or branding is included. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
-
-MIT License — see [LICENSE](LICENSE) for details.

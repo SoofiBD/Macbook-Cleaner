@@ -213,7 +213,7 @@ safe_rm() {
       return 0
     fi
     local _td; _td="$(_trash_item "$path" || true)"
-    if [ -n "$_td" ] || [ ! -e "$path" ]; then
+    if [ -n "$_td" ] || { [ ! -e "$path" ] && [ ! -L "$path" ]; }; then
       success "$label: ${BOLD}${sz_h}${NC} $(L trashed)"
       TOTAL_FREED=$((TOTAL_FREED + sz_b))
       TOTAL_ITEMS=$((TOTAL_ITEMS + 1))
@@ -317,7 +317,7 @@ safe_rm_contents() {
       # read returns 0. Use get_size_bytes so files (not just dirs) are measured.
       local child_sz; child_sz=$(get_size_bytes "$child")
       _td="$(_trash_item "$child" direct || true)"
-      if [ -n "$_td" ] || [ ! -e "$child" ]; then
+      if [ -n "$_td" ] || { [ ! -e "$child" ] && [ ! -L "$child" ]; }; then
         trashed_any=true
         trashed_bytes=$((trashed_bytes + child_sz))
         oplog_record "trash" "$child_sz" "$child" "$_td" "$_CURRENT_CATEGORY"

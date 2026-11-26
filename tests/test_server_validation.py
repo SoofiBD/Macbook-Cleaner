@@ -21,7 +21,7 @@ class TestScriptPath(unittest.TestCase):
 
         source = SCRIPT_PATH.read_text(encoding="utf-8")
         self.assertIn(f'VERSION="{APP_VERSION}"', source)
-        self.assertEqual(APP_VERSION, "2.3.4")
+        self.assertEqual(APP_VERSION, "2.4.0")
 
     def test_dashboard_footer_uses_runtime_version_placeholder(self):
         from server import VERSION_PLACEHOLDER
@@ -883,3 +883,63 @@ class TestAtomicWriteFailure(unittest.TestCase):
                     server._atomic_write(Path(tmp) / 'state.json', boom, binary=False)
             close.assert_not_called()
             self.assertEqual(os.listdir(tmp), [])
+
+
+class TestRobustness(unittest.TestCase):
+    """Corrupt local files and odd inputs must degrade, not crash handlers."""
+
+    def test_malformed_info_plist_does_not_break_discovery(self):
+        import tempfile
+        from pathlib import Path
+        import server
+
+        root = Path(tempfile.mkdtemp()) / "Applications"
+        for name, body in (("Bad.app", b"<plist><dict><key>x"),
+                           ("List.app", b'<?xml version="1.0"?><plist version="1.0"><array/></plist>')):
+            contents = root / name / "Contents"
+            contents.mkdir(parents=True)
+            (contents / "Info.plist").write_bytes(body)
+
+        with patch.object(server, "_application_roots", return_value=(root,)), \
+             patch.object(server.shutil, "which", return_value=None):
+            apps = server.discover_applications()
+
+        self.assertEqual(sorted(a["name"] for a in apps), ["Bad", "List"])
+
+    def test_history_skips_non_finite_values(self):
+        import tempfile
+        import server
+
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as f:
+            f.write('[[1, 100], [Infinity, 5], [2, NaN], [3, 300]]')
+        with patch.object(server, "HISTORY_FILE", f.name):
+            self.assertEqual(server._load_history(), [(1.0, 100), (3.0, 300)])
+
+    def test_pathological_json_body_is_rejected_not_raised(self):
+        import io
+        import server
+
+        # Deep nesting raises RecursionError on every supported Python.
+        for body in (b"[" * 100000,):
+            dummy = SimpleNamespace(
+                headers={"Content-Length": str(len(body)), "Content-Type": "application/json"},
+                rfile=io.BytesIO(body),
+            )
+            payload, err = server.CleanupHandler._read_json_body(dummy)
+            self.assertIsNone(payload)
+            self.assertTrue(err)
+
+    def test_shutdown_terminates_registered_children(self):
+        import server
+        import subprocess as sp
+
+        proc = sp.Popen(["sleep", "30"], start_new_session=True,
+                        stdout=sp.PIPE, stderr=sp.PIPE)
+        with server._live_processes_lock:
+            server._live_processes.add(proc)
+        try:
+            server._terminate_live_processes()
+            self.assertIsNotNone(proc.poll())
+        finally:
+            with server._live_processes_lock:
+                server._live_processes.discard(proc)

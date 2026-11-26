@@ -367,7 +367,7 @@ else
   RED=''; YELLOW=''; GREEN=''; CYAN=''; BLUE=''; BOLD=''; DIM=''; NC=''
 fi
 
-VERSION="2.3.4"
+VERSION="2.4.0"
 SUDO_AVAILABLE=false
 TOTAL_FREED=0
 TOTAL_ITEMS=0
@@ -397,21 +397,29 @@ _is_excluded() {
   # Disable globbing so patterns aren't expanded against CWD. Remember whether
   # noglob was already set so we don't clobber a caller that relies on it.
   local _had_noglob=0; case $- in *f*) _had_noglob=1 ;; esac
+  # APFS is case-insensitive by default: "keep" must protect "Keep".
+  local _had_nocase=0; shopt -q nocasematch && _had_nocase=1
   set -f
+  shopt -s nocasematch
+  local hit=1
   for pat in $EXCLUDE_RAW; do
     [ -n "$pat" ] || continue
+    # Normalise common spellings: "~/x" (launchd never expands it) and "x/".
+    case "$pat" in "~"|"~/"*) pat="$HOME${pat#\~}" ;; esac
+    while [ "${#pat}" -gt 1 ] && [ "${pat%/}" != "$pat" ]; do pat="${pat%/}"; done
     case "$path" in
-      $pat|$pat/*) IFS="$oldIFS"; [ "$_had_noglob" -eq 1 ] || set +f; return 0 ;;
+      $pat|$pat/*) hit=0; break ;;
     esac
     # Removing an ancestor would remove the protected path with it.
     # shortcut: literal-prefix check only, a glob pattern beneath $path is not detected.
     case "$pat" in
-      "$path"/*) IFS="$oldIFS"; [ "$_had_noglob" -eq 1 ] || set +f; return 0 ;;
+      "$path"/*) hit=0; break ;;
     esac
   done
   IFS="$oldIFS"
   [ "$_had_noglob" -eq 1 ] || set +f
-  return 1
+  [ "$_had_nocase" -eq 1 ] || shopt -u nocasematch
+  return "$hit"
 }
 
 # JSON mode sub-item lists (comma-separated, parsed via IFS read -ra)
@@ -495,7 +503,7 @@ CATEGORIES=(
   "app_uninstaller|cat_app_uninstaller|scan_app_uninstaller|clean_app_uninstaller|0|caution|0"
   "mail_downloads|cat_mail_downloads|scan_mail_downloads|clean_mail_downloads|0|safe|1"
   "diagnostic_reports|cat_diagnostic_reports|scan_diagnostic_reports|clean_diagnostic_reports|0|safe|0"
-  "quicklook_cache|cat_quicklook_cache|scan_quicklook_cache|clean_quicklook_cache|0|safe|1"
+  "quicklook_cache|cat_quicklook_cache|scan_quicklook_cache|clean_quicklook_cache|0|safe|0"
   "saved_app_state|cat_saved_app_state|scan_saved_app_state|clean_saved_app_state|0|caution|1"
   "other_trash|cat_other_trash|scan_other_trash|clean_other_trash|0|safe|1"
   "project_artifacts|cat_project_artifacts|scan_project_artifacts|clean_project_artifacts|0|caution|0"
@@ -558,7 +566,9 @@ cat_index_by_id() {
 # Canonical "safe" quick-clean set, expressed by stable ids (not positions) so
 # reordering the CATEGORIES registry can never silently change what gets cleaned.
 # Trash comes first so items the other categories move to Trash stay recoverable.
-SAFE_CLEAN_IDS=(trash user_cache system_cache logs temp_files browser_cache)
+# temp_files is deliberately absent: running apps keep live sockets, XPC state
+# and safe-save files there, so it must stay an explicit, attended choice.
+SAFE_CLEAN_IDS=(trash user_cache system_cache logs browser_cache)
 
 # ids → space-separated 1-based display numbers consumed by run_clean/selectors.
 cat_nums_by_ids() {
@@ -668,6 +678,21 @@ json_escape_str() {
   s="${s//$'\n'/\\n}"
   s="${s//$'\t'/\\t}"
   s="${s//$'\r'/\\r}"
+  # Any other C0 control character makes the whole JSON document invalid.
+  # Slow per-character path, taken only for the rare names that need it.
+  case "$s" in
+    *[[:cntrl:]]*)
+      local out="" c i
+      for ((i = 0; i < ${#s}; i++)); do
+        c="${s:i:1}"
+        case "$c" in
+          [[:cntrl:]]) out+=$(printf '\\u%04x' "'$c") ;;
+          *) out+="$c" ;;
+        esac
+      done
+      s="$out"
+      ;;
+  esac
   echo "$s"
 }
 
@@ -980,14 +1005,15 @@ scan_temp_files() {
   tmpdir=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || echo "${TMPDIR:-/tmp}")
   local cachedir
   cachedir=$(getconf DARWIN_USER_CACHE_DIR 2>/dev/null || echo "")
-  if [ -d "$tmpdir" ]; then
-    s=$(get_dir_size_bytes "$tmpdir") || s=0
-    total=$((total + s))
-  fi
-  if [ -n "$cachedir" ] && [ -d "$cachedir" ]; then
-    s=$(get_dir_size_bytes "$cachedir") || s=0
-    total=$((total + s))
-  fi
+  # Count only what clean_temp_files would remove (entries idle for 2+ days).
+  local dir child
+  for dir in "$tmpdir" "$cachedir"; do
+    [ -n "$dir" ] && [ -d "$dir" ] || continue
+    while IFS= read -r -d '' child; do
+      s=$(get_size_bytes "$child") || s=0
+      total=$((total + s))
+    done < <(_stale_temp_children "$dir")
+  done
   CAT_SIZES[4]=$total
 }
 
@@ -1164,15 +1190,37 @@ clean_logs() {
   fi
 }
 
+# Remove only top-level temp entries with nothing touched in the last 2 days.
+# Live entries (open sockets, XPC state, in-progress safe-saves, downloads) are
+# rewritten constantly, so the age check keeps running apps from losing them.
+# shortcut: age heuristic, not an lsof check; a file held open but idle for
+# 2+ days can still be removed.
+_stale_temp_children() {
+  local child
+  [ -d "$1" ] || return 0
+  while IFS= read -r -d '' child; do
+    [ -z "$(find "$child" -mtime -2 -print -quit 2>/dev/null)" ] && printf '%s\0' "$child"
+  done < <(find "$1" -maxdepth 1 -mindepth 1 -print0 2>/dev/null)
+}
+
+_clean_stale_temp_children() {
+  local dir="$1" label="$2" child
+  [ -d "$dir" ] || return 0
+  _validate_removal_path "$dir" contents "$label" || return 0
+  while IFS= read -r -d '' child; do
+    safe_rm "$child" "$label: $(basename "$child")"
+  done < <(_stale_temp_children "$dir")
+}
+
 clean_temp_files() {
   # Temp files are OS-managed ephemeral data — use rm -rf directly (not trash)
   _CURRENT_NEEDS_SUDO=0; _CURRENT_IS_TRASH_EMPTY=1
   header "$(L hdr_temp)"
   local tmpdir; tmpdir=$(getconf DARWIN_USER_TEMP_DIR 2>/dev/null || echo "${TMPDIR:-/tmp}")
   local cachedir; cachedir=$(getconf DARWIN_USER_CACHE_DIR 2>/dev/null || echo "")
-  safe_rm_contents "$tmpdir" "User Temp"
+  _clean_stale_temp_children "$tmpdir" "User Temp"
   if [ -n "$cachedir" ] && [ -d "$cachedir" ]; then
-    safe_rm_contents "$cachedir" "User Var Cache"
+    _clean_stale_temp_children "$cachedir" "User Var Cache"
   fi
   _CURRENT_IS_TRASH_EMPTY=0
 }
@@ -1322,7 +1370,7 @@ clean_ios_backups() {
       uuid="${uuid## }"; uuid="${uuid%% }"
       [ -z "$uuid" ] && continue
       case "$uuid" in
-        */*|*..*)
+        .|..|*/*|*..*)
           err "$(L invalid_path_traversal): $uuid"
           continue
           ;;
@@ -1450,7 +1498,7 @@ clean_app_leftovers() {
       d="${d## }"; d="${d%% }"
       [ -z "$d" ] && continue
       case "$d" in
-        */*|*..*)
+        .|..|*/*|*..*)
           err "$(L invalid_path_traversal): $d"
           continue
           ;;
@@ -1748,7 +1796,12 @@ clean_developer() {
           safe_rm_contents "$HOME/.ollama/models" "Ollama Models"
           ;;
         lm_studio)
-          safe_rm_contents "$HOME/Library/Application Support/LM-Studio" "LM Studio Cache"
+          # Application Support/LM-Studio is userData (settings, storage);
+          # only its Chromium cache directories are disposable.
+          local lm_dir
+          for lm_dir in Cache "Code Cache" GPUCache; do
+            safe_rm_contents "$HOME/Library/Application Support/LM-Studio/$lm_dir" "LM Studio $lm_dir"
+          done
           ;;
         *)
           # Unknown key — warn and skip (never silently swallow)
@@ -1778,7 +1831,8 @@ _find_broken_symlinks() {
   local dir
   for dir in "$HOME/.local/bin" "$HOME/.config" "$HOME/bin"; do
     if [ -d "$dir" ]; then
-      find "$dir" -maxdepth 3 -type l ! -e -print0 2>/dev/null
+      # BSD find has no -e primary; test the link target explicitly.
+      find "$dir" -maxdepth 3 -type l ! -exec test -e {} \; -print0 2>/dev/null
     fi
   done
 }
@@ -1901,6 +1955,7 @@ do_history_json() {
     function esc(s) {
       gsub(/\\/, "\\\\", s); gsub(/\"/, "\\\"", s)
       gsub(/\r/, "\\r", s); gsub(/\n/, "\\n", s); gsub(/\t/, "\\t", s)
+      gsub(/[\001-\010\013\014\016-\037\177]/, "?", s)
       return s
     }
     function human(b) {
@@ -2071,7 +2126,7 @@ scan_developer_subitems_json() {
     local link
     while IFS= read -r link; do
       [ -n "$link" ] && broken_count=$((broken_count + 1))
-    done < <(find "$dir" -maxdepth 3 -type l ! -e 2>/dev/null)
+    done < <(find "$dir" -maxdepth 3 -type l ! -exec test -e {} \; -print 2>/dev/null)
   done
   
   local s_sym=$((broken_count * 1024))
@@ -2377,6 +2432,10 @@ do_ops_json() {
 do_restore_json() {
   JSON_MODE=true
   local mode="$1" selector="$2"
+  # Dry-run executes no mutation, including moves back out of Trash.
+  if [ "${APPLE_CLEANUP_DRYRUN:-0}" = "1" ]; then
+    printf '{"success":true,"dry_run":true,"restored":[],"skipped":[],"failed":[]}\n'; return 0
+  fi
   local restored="" skipped="" failed=""
   if [ ! -f "$OPLOG_FILE" ]; then
     printf '{"success":true,"restored":[],"skipped":[],"failed":[]}\n'; return 0
@@ -2442,6 +2501,10 @@ do_restore_json() {
 
 do_flush_dns() {
   JSON_MODE=true
+  if [ "${APPLE_CLEANUP_DRYRUN:-0}" = "1" ]; then
+    printf '{"success":true,"dry_run":true,"message":"Dry run: %s was not performed."}\n' "DNS flush"
+    return 0
+  fi
   dscacheutil -flushcache 2>/dev/null || true
   if [ "$(id -u)" -eq 0 ] || sudo -n true 2>/dev/null; then
     sudo -n killall -HUP mDNSResponder 2>/dev/null || true
@@ -2453,6 +2516,10 @@ do_flush_dns() {
 
 do_purge_ram() {
   JSON_MODE=true
+  if [ "${APPLE_CLEANUP_DRYRUN:-0}" = "1" ]; then
+    printf '{"success":true,"dry_run":true,"message":"Dry run: %s was not performed."}\n' "memory purge"
+    return 0
+  fi
   if purge 2>/dev/null; then
     printf '{"success":true,"message":"Inactive memory purged successfully."}\n'
   else
@@ -2476,6 +2543,8 @@ do_clean_launchagents() {
   for d in "${dirs[@]}"; do
     [ -d "$d" ] || continue
     while IFS= read -r -d '' plist; do
+      # An unreadable (root-owned) plist fails lint without being invalid.
+      [ -r "$plist" ] || continue
       if ! plutil -lint "$plist" &>/dev/null; then
         local before_items=$TOTAL_ITEMS
         safe_rm "$plist" "LaunchAgent: $(basename "$plist")" >/dev/null 2>&1 || true
@@ -2509,6 +2578,10 @@ do_thin_snapshots_json() {
 
 do_spotlight_reindex() {
   JSON_MODE=true
+  if [ "${APPLE_CLEANUP_DRYRUN:-0}" = "1" ]; then
+    printf '{"success":true,"dry_run":true,"message":"Dry run: %s was not performed."}\n' "Spotlight reindex"
+    return 0
+  fi
   if [ "$(id -u)" -eq 0 ] || sudo -n true 2>/dev/null; then
     sudo -n mdutil -i off / >/dev/null 2>&1 || true
     sudo -n mdutil -E / >/dev/null 2>&1 || true
@@ -3119,14 +3192,14 @@ main() {
       echo ""
       warn "$(L safe_clean_info)"
       confirm "$(L continue_prompt)" || { echo ""; info "$(L cancelled)"; exit 0; }
-      local quick_nums=(); read -ra quick_nums <<< "$(cat_nums_by_ids "${SAFE_CLEAN_IDS[@]}")"
+      local quick_nums=(); read -ra quick_nums <<< "$(cat_nums_by_ids "${SAFE_CLEAN_IDS[@]}" | tr '\n' ' ')"
       run_clean "${quick_nums[@]}"
       ;;
     2)
       local raw_selection; raw_selection=$(category_selector)
       local selected_nums=()
       if [ "$raw_selection" = "all" ]; then
-        read -ra selected_nums <<< "$(cat_nums_by_ids "${SAFE_CLEAN_IDS[@]}")"
+        read -ra selected_nums <<< "$(cat_nums_by_ids "${SAFE_CLEAN_IDS[@]}" | tr '\n' ' ')"
       else
         read -ra selected_nums <<< "$raw_selection"
       fi
